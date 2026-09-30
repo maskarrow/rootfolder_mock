@@ -55,7 +55,9 @@ class JsonFormatter(logging.Formatter):
                 line[field] = getattr(record, field)
         if record.exc_info:
             line["exc"] = self.formatException(record.exc_info)
-        return json.dumps(line, ensure_ascii=False, default=str)
+        # ASCII with `\u` escapes: still valid JSON for any collector, and a stdout
+        # with a legacy encoding (a Windows console or pipe) cannot fail on a `ț`.
+        return json.dumps(line, default=str)
 
 
 def configure() -> None:

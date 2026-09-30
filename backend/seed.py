@@ -80,7 +80,7 @@ def items_for(org: Org) -> list[Item]:
                 Item(
                     org_id=org.id,
                     title=f"{subject}: {aspect}",
-                    body=f"{text} Autoritatea contractantă: {authority}.",
+                    body=f"{text} Licitația este organizată de {authority}.",
                     embedding=unit_vector(rng),
                 )
             )
