@@ -16,13 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app import emails, logs
+from app import emails, logs, secrets
 from app.config import settings
 from app.db import SessionLocal, engine
 from app.deps import get_auth
 from app.headers import SecurityHeaders
 from app.origin import CheckOrigin
-from app.routers import auth, files, items, stream
+from app.routers import auth, checks, files, items, stream
 from app.services import cleanup, jobs
 
 logs.configure()
@@ -48,6 +48,22 @@ async def _periodic_cleanup() -> None:
         await asyncio.sleep(settings.cleanup_interval_hours * 3600)
 
 
+def _check_encryption_key() -> None:
+    """Saved keys must not become unreadable silently. Without saved keys the master
+    key is optional; with encrypted rows and no key, the app would start and fail at
+    the first provider check."""
+    if secrets.configured():
+        return
+    with engine.connect() as conn:
+        count = conn.execute(text("SELECT count(*) FROM api_keys")).scalar() or 0
+    if count:
+        raise RuntimeError(
+            f"The database has {count} encrypted provider keys but API_KEYS_ENCRYPTION_KEY "
+            "is missing from the environment: they cannot be decrypted. Put the master key "
+            "back, or delete the rows in `api_keys` and save the keys again."
+        )
+
+
 def _check_emails() -> None:
     """A public install does not start without an email key, as in Delegate, where
     invites and password resets depend on it. Public is recognized by `APP_URL`."""
@@ -61,6 +77,7 @@ def _check_emails() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    await to_thread.run_sync(_check_encryption_key)
     await to_thread.run_sync(_check_emails)
     # Before the first request, so nobody sees a file "processing" that never ends.
     await to_thread.run_sync(jobs.fail_interrupted)
@@ -113,6 +130,7 @@ _AUTHENTICATED = [Depends(get_auth)]
 app.include_router(items.router, dependencies=_AUTHENTICATED)
 app.include_router(files.router, dependencies=_AUTHENTICATED)
 app.include_router(stream.router, dependencies=_AUTHENTICATED)
+app.include_router(checks.router, dependencies=_AUTHENTICATED)
 
 
 def _health() -> dict:
