@@ -37,3 +37,8 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency style, as in Delegate: these defaults are markers, not calls
+# whose result is shared between requests.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Query"]
