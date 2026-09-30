@@ -20,6 +20,7 @@ dependencies = [
 [dependency-groups]
 # `uv sync` installs this group by default, so `just up` brings the tests too.
 dev = [
+    "httpx2>=2.13.1",
     "pytest>=9.1.1",
     "python-dotenv>=1.2.2",
     "ruff>=0.14.0",
@@ -37,6 +38,12 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+# `alembic/` (the migrations folder) would otherwise pass for our own package, and
+# the tests' `conftest` for someone else's.
+known-first-party = ["app", "conftest"]
+known-third-party = ["alembic"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI's dependency style, as in Delegate: these defaults are markers, not calls
