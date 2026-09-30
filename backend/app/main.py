@@ -22,7 +22,7 @@ from app.db import SessionLocal, engine
 from app.deps import get_auth
 from app.headers import SecurityHeaders
 from app.origin import CheckOrigin
-from app.routers import auth, files, items
+from app.routers import auth, files, items, stream
 from app.services import cleanup, jobs
 
 logs.configure()
@@ -112,6 +112,7 @@ _AUTHENTICATED = [Depends(get_auth)]
 
 app.include_router(items.router, dependencies=_AUTHENTICATED)
 app.include_router(files.router, dependencies=_AUTHENTICATED)
+app.include_router(stream.router, dependencies=_AUTHENTICATED)
 
 
 def _health() -> dict:
