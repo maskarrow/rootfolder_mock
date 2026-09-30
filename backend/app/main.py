@@ -22,8 +22,8 @@ from app.db import SessionLocal, engine
 from app.deps import get_auth
 from app.headers import SecurityHeaders
 from app.origin import CheckOrigin
-from app.routers import auth, items
-from app.services import cleanup
+from app.routers import auth, files, items
+from app.services import cleanup, jobs
 
 logs.configure()
 logger = logging.getLogger(__name__)
@@ -62,6 +62,8 @@ def _check_emails() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await to_thread.run_sync(_check_emails)
+    # Before the first request, so nobody sees a file "processing" that never ends.
+    await to_thread.run_sync(jobs.fail_interrupted)
     # `CLEANUP_INTERVAL_HOURS=0` turns it off (tests must not see rows deleted by a
     # parallel task mid-test).
     cleaner = (
@@ -109,6 +111,7 @@ app.include_router(auth.router)
 _AUTHENTICATED = [Depends(get_auth)]
 
 app.include_router(items.router, dependencies=_AUTHENTICATED)
+app.include_router(files.router, dependencies=_AUTHENTICATED)
 
 
 def _health() -> dict:
