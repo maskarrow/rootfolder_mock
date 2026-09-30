@@ -22,7 +22,7 @@ from app.db import SessionLocal, engine
 from app.deps import get_auth
 from app.headers import SecurityHeaders
 from app.origin import CheckOrigin
-from app.routers import auth
+from app.routers import auth, items
 from app.services import cleanup
 
 logs.configure()
@@ -107,6 +107,8 @@ app.include_router(auth.router)
 # Attached per router rather than per route, so a new route is protected without
 # anyone remembering to.
 _AUTHENTICATED = [Depends(get_auth)]
+
+app.include_router(items.router, dependencies=_AUTHENTICATED)
 
 
 def _health() -> dict:
