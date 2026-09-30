@@ -1,0 +1,24 @@
+# Local development only: Postgres with pgvector. The deploy compose files are not
+# part of this repo; the DevOps owner writes them from Delegate's docs/deploy/STEPS.md.
+name: delegate-mock
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: mock
+      POSTGRES_PASSWORD: mock
+      POSTGRES_DB: mock
+    # 5434, so the mock runs next to Delegate's Postgres on 5433.
+    ports: ["5434:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    # Lets `docker compose up --wait` return only once Postgres accepts connections;
+    # on a fresh volume `initdb` takes a few seconds and migrations would race it.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mock -d mock"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:

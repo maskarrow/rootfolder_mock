@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+storage/
+
+# Per-developer agent tooling (local preview config).
+.claude/

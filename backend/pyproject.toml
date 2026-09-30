@@ -1,0 +1,39 @@
+[project]
+name = "delegate-mock"
+version = "0.1.0"
+description = "A small app with Delegate's technical shape, for rehearsing the deploy"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic>=1.18.5",
+    "argon2-cffi>=25.1.0",
+    "cryptography>=50.0.1",
+    "fastapi>=0.139.2",
+    "httpx>=0.28.1",
+    "pgvector>=0.5.0",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+    "python-multipart>=0.0.32",
+    "sqlalchemy>=2.0.51",
+    "uvicorn[standard]>=0.51.0",
+]
+
+[dependency-groups]
+# `uv sync` installs this group by default, so `just up` brings the tests too.
+dev = [
+    "pytest>=9.1.1",
+    "python-dotenv>=1.2.2",
+    "ruff>=0.14.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Lets `from app...` resolve when pytest starts outside `backend/`.
+pythonpath = ["."]
+filterwarnings = ["error::DeprecationWarning:app.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
