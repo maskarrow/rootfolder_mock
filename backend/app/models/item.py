@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Text, false, func
+from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Index, Text, false, func
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +20,17 @@ class Item(Base):
     """
 
     __tablename__ = "items"
+    # Declared here as in migration 0001, so `alembic check` (CI) sees the model and
+    # the database agree.
+    __table_args__ = (
+        Index("ix_items_search", "search", postgresql_using="gin"),
+        Index(
+            "ix_items_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id"), nullable=False, index=True)
