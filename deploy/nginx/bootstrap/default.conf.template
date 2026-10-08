@@ -1,0 +1,16 @@
+# Port 80 only, used once: before the first certificate exists, the HTTPS config
+# cannot start. Serves Let's Encrypt's challenge and nothing else.
+#   NGINX_CONFIG=bootstrap docker compose up -d nginx
+
+server {
+    listen 80;
+    server_name ${DOMAIN} www.${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 404;
+    }
+}

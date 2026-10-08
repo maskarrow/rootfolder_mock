@@ -10,6 +10,10 @@ const API_INTERNAL_URL = process.env.API_INTERNAL_URL ?? "http://localhost:8010"
 const APP_VERSION = process.env.APP_VERSION;
 
 const nextConfig: NextConfig = {
+  // A self-contained server (`.next/standalone/server.js`) with only the
+  // dependencies it uses, for the container image.
+  output: "standalone",
+
   // No `X-Powered-By: Next.js`.
   poweredByHeader: false,
 

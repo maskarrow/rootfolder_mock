@@ -1,0 +1,118 @@
+# The app on https://${DOMAIN}. Plain HTTP and www redirect to it.
+#
+# The nginx image fills in ${DOMAIN} from the environment when the container starts;
+# nginx's own variables ($host, $request_id, ...) are left alone. A change here
+# takes effect with `docker compose up -d --force-recreate nginx`.
+
+# The request ID nginx generates goes to the app as X-Request-ID, so one request has
+# the same ID in this log and in the app's JSON lines.
+log_format main_rid '$remote_addr [$time_local] "$request" $status $body_bytes_sent '
+                    'rt=$request_time rid=$request_id "$http_user_agent"';
+
+limit_req_zone $binary_remote_addr zone=api:10m rate=20r/s;
+limit_req_zone $binary_remote_addr zone=login:10m rate=1r/s;
+limit_req_zone $binary_remote_addr zone=stream:10m rate=10r/m;
+# nginx's default for a limited request is 503.
+limit_req_status 429;
+
+server_tokens off;
+
+# Docker's DNS, asked again every 10 s. A deploy recreates api and web with new
+# addresses; a name resolved once at startup would keep pointing at the old
+# container. It also lets nginx start while api and web are down.
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+server {
+    listen 80;
+    server_name ${DOMAIN} www.${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://${DOMAIN}$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name www.${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    return 301 https://${DOMAIN}$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+
+    access_log /var/log/nginx/access.log main_rid;
+    client_max_body_size 10m;
+
+    # Through variables, so the names are resolved per request (see `resolver`).
+    set $api api:8000;
+    set $web web:3000;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Request-ID $request_id;
+
+    # /api/... goes to the backend without the prefix. The UI gets HSTS from Next;
+    # API responses get it here.
+
+    # Uploads: up to the app's 500 MB cap plus the multipart overhead, passed on as
+    # they arrive instead of first written to nginx's disk. Above 510 MB nginx
+    # answers 413 itself; at 500-510 MB the app answers with a readable message.
+    location = /api/files {
+        limit_req zone=api burst=40 nodelay;
+        client_max_body_size 510m;
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://$api;
+    }
+
+    location = /api/auth/login {
+        limit_req zone=login burst=5 nodelay;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://$api;
+    }
+
+    # The streamed answer: the backend sends `X-Accel-Buffering: no`, so nginx
+    # passes it through as it comes. FastAPI pings every 15 s of silence, well under
+    # the read timeout.
+    location = /api/stream {
+        limit_req zone=stream burst=5 nodelay;
+        proxy_read_timeout 300s;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://$api;
+    }
+
+    location /api/ {
+        limit_req zone=api burst=40 nodelay;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://$api;
+    }
+
+    location / {
+        proxy_pass http://$web;
+    }
+}

@@ -1,0 +1,108 @@
+# The stack on the server: db, api, web, nginx, and certbot on demand.
+#
+# Lives in /opt/rootfolder next to:
+#   .env                   secrets and settings (from .env.example), chmod 640
+#   compose.override.yaml  the exact api and web images, written by deploy.sh
+#   certbot/               certificates and the ACME challenge folder
+#   backups/               database dumps taken before each deploy
+#
+# Day-to-day commands, from /opt/rootfolder:
+#   docker compose ps
+#   docker compose logs -f api
+#   docker compose run --rm api python create_user.py <email> "<Name>" --org <Org> --admin
+
+# Project name: containers and volumes are `rootfolder-mock-...`, whatever the
+# folder. `docker compose down -v` removes exactly this app's data.
+name: rootfolder-mock
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Docker's default 64 MB of shared memory can fail a parallel HNSW index build.
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [internal]
+    mem_limit: 3g
+
+  api:
+    # The tag here is a placeholder: compose.override.yaml, written by deploy.sh,
+    # pins the exact image by digest.
+    image: ghcr.io/maskarrow/rootfolder-mock-api
+    env_file: .env
+    environment:
+      # Built here so the password lives in one place (.env). It must be URL-safe:
+      # generate it with `openssl rand -hex 32`.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # Absolute: in the image the project root is `/`, and a relative path would
+      # point where the non-root user cannot write.
+      STORAGE_DIR: /data/storage
+      # uvicorn trusts X-Forwarded-For / -Proto only from nginx, on this network.
+      FORWARDED_ALLOW_IPS: 172.30.0.0/24
+    volumes:
+      - ${STORAGE_HOST_DIR:?}:/data/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    # Docker kills a container 10 s after asking it to stop; uvicorn needs up to 30.
+    stop_grace_period: 40s
+    restart: unless-stopped
+    networks: [internal]
+    mem_limit: 1536m
+
+  web:
+    image: ghcr.io/maskarrow/rootfolder-mock-web
+    environment:
+      # Read when the server starts: the same image works with any value.
+      API_INTERNAL_URL: http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks: [internal]
+    mem_limit: 768m
+
+  nginx:
+    image: nginx:stable-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?}
+    volumes:
+      # `bootstrap` (port 80 only, for the first certificate) or `app`. The nginx
+      # image turns *.template into its config, filling in ${DOMAIN}.
+      - ./nginx/${NGINX_CONFIG:-app}:/etc/nginx/templates:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    restart: unless-stopped
+    networks: [internal]
+    mem_limit: 256m
+
+  certbot:
+    image: certbot/certbot:latest
+    # Only on demand: `docker compose run --rm certbot ...`.
+    profiles: [certbot]
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+
+volumes:
+  pgdata:
+
+networks:
+  internal:
+    # Fixed, so FORWARDED_ALLOW_IPS above can name nginx's network; its own address
+    # changes on every restart.
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

@@ -1,0 +1,139 @@
+# Deploy, started by hand from the Actions tab.
+#
+# 1. build: on an ARM runner (the server is a Hetzner CAX, ARM), builds the api and
+#    web images for the chosen commit, tagged `sha-<commit>`, and pushes them to
+#    GHCR. Images that already exist for that commit are reused, not rebuilt.
+# 2. deploy: connects to the server over SSH as `deploy`, whose key can only run
+#    scripts/deploy.sh, and passes the two images pinned by digest. The script's
+#    output appears in this job's log.
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   DEPLOY_HOST          the server's IPv4
+#   DEPLOY_SSH_KEY       the private half of the CI key (the public half is in
+#                        /home/deploy/.ssh/authorized_keys)
+#   DEPLOY_KNOWN_HOSTS   the server's host key line, from your own known_hosts
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to deploy
+        required: true
+        default: main
+      dry_run:
+        description: Dry run (pull the images on the server, change nothing)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One deploy at a time; a second one waits instead of cancelling the first.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  IMAGE_PREFIX: ghcr.io/maskarrow/rootfolder-mock
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      api: ${{ steps.refs.outputs.api }}
+      web: ${{ steps.refs.outputs.web }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Version
+        id: version
+        run: echo "version=sha-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Images already built for this commit
+        id: exists
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for image in api web; do
+            if docker buildx imagetools inspect "$IMAGE_PREFIX-$image:$VERSION" >/dev/null 2>&1; then
+              echo "$image=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$image=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      - name: Build the api image
+        if: steps.exists.outputs.api == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: backend
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE_PREFIX }}-api:${{ steps.version.outputs.version }}
+          build-args: APP_VERSION=${{ steps.version.outputs.version }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build the web image
+        if: steps.exists.outputs.web == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: frontend
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE_PREFIX }}-web:${{ steps.version.outputs.version }}
+          build-args: APP_VERSION=${{ steps.version.outputs.version }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      - name: Digests
+        id: refs
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for image in api web; do
+            digest="$(docker buildx imagetools inspect "$IMAGE_PREFIX-$image:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)"
+            echo "$image=$IMAGE_PREFIX-$image@$digest" >> "$GITHUB_OUTPUT"
+            echo "- $image: \`$IMAGE_PREFIX-$image@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Deploy over SSH
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          API_IMAGE: ${{ needs.build.outputs.api }}
+          WEB_IMAGE: ${{ needs.build.outputs.web }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The server's own key, checked: never StrictHostKeyChecking=no.
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "deploy@$HOST" "$DRY_RUN $API_IMAGE $WEB_IMAGE"
+          echo "Deployed ${{ needs.build.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
