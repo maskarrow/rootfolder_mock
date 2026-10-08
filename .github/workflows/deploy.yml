@@ -134,6 +134,8 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           # The server's own key, checked: never StrictHostKeyChecking=no.
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # `--`: ssh also parses options after the host, and the command may start
+          # with `--dry-run`. The server's forced command receives the rest as text.
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            "deploy@$HOST" "$DRY_RUN $API_IMAGE $WEB_IMAGE"
+            "deploy@$HOST" -- "$DRY_RUN $API_IMAGE $WEB_IMAGE"
           echo "Deployed ${{ needs.build.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
