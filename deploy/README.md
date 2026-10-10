@@ -130,9 +130,27 @@ can read `.env`, which compose needs for every command.
    first user and the demo data:
 
    ```bash
-   docker compose run --rm api python create_user.py you@example.com "Your Name" --org Delegate --admin
+   docker compose run --rm api python create_user.py you@example.com "Your Name" --org Rootfolder --admin
    docker compose run --rm api python seed.py
    ```
+
+## Accounts, demo data and keys
+
+None of these needs a deploy: the scripts run inside a one-off api container, on
+the live database. Passwords and keys are typed in the terminal, never on the
+command line.
+
+| What | Command |
+|---|---|
+| List the accounts | `docker compose run --rm api python list_users.py` |
+| A colleague's account (member) | `docker compose run --rm api python create_user.py colleague@example.com "Name" --org Rootfolder` |
+| The same, as an admin | add `--admin` |
+| A new password (logs the account out everywhere) | `docker compose run --rm api python set_password.py colleague@example.com` |
+| Delete an account (asks to type the email again) | `docker compose run --rm api python delete_user.py colleague@example.com` |
+| The demo data (idempotent) | `docker compose run --rm api python seed.py` |
+| The org's Anthropic key, encrypted | `docker compose run --rm api python set_org_key.py --org Rootfolder --provider anthropic` |
+
+A member sees everything except the two admin checks (provider key, test email).
 
 ## Every day
 

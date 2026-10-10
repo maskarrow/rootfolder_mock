@@ -19,6 +19,8 @@ LOGIN = "login"
 LOGIN_FAILED = "login_failed"
 LOGOUT = "logout"
 ACCOUNT_CREATED = "account_created"
+PASSWORD_SET = "password_set"
+ACCOUNT_DELETED = "account_deleted"
 
 
 def write(

@@ -6,7 +6,7 @@ import { getMe } from "@/lib/api";
 import { safeReturnPath } from "@/lib/session";
 
 export const metadata: Metadata = {
-  title: "Sign in · delegate-mock",
+  title: "Sign in · rootfolder-mock",
 };
 
 /** Public in `proxy.ts`, so it asks itself: someone with a good session skips the
@@ -27,10 +27,10 @@ export default async function LoginPage({
 
   return (
     <main className="narrow">
-      <h1>delegate-mock</h1>
+      <h1>rootfolder-mock</h1>
       <p className="muted">
-        A deploy rehearsal app. Accounts are created from the terminal with{" "}
-        <code>just create-user</code>.
+        A deploy rehearsal app. Accounts are created on the server with{" "}
+        <code>create_user.py</code>.
       </p>
       <LoginForm destination={destination} />
     </main>

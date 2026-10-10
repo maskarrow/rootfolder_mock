@@ -1,13 +1,14 @@
 """Creates an account, and its org if the org does not exist yet.
 
 The password is typed twice in the terminal and not echoed; never passed as an
-argument, where it would stay in the shell history. In a deploy this runs inside
-the api container, from backend/.
+argument, where it would stay in the shell history.
 
-From the repo root:
-    just create-user someone@company.com "First Last" "Delegate" --admin
-or from backend/:
-    uv run python create_user.py someone@company.com "First Last" --org Delegate --admin
+On the server, from /opt/rootfolder:
+    docker compose run --rm api python create_user.py someone@company.com "First Last" \
+        --org Rootfolder --admin
+locally, from the repo root:
+    just create-user someone@company.com "First Last" Rootfolder --admin
+Without --admin the account is a member: no provider or email checks.
 """
 
 import argparse

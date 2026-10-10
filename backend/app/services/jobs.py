@@ -4,7 +4,7 @@ After an upload the file is `processing`; a `BackgroundTasks` job waits
 `JOB_SECONDS` and marks it `done`. The job lives in the server process, so a
 restart (a deploy) in the middle kills it. At the next startup
 `fail_interrupted` marks every file still `processing` as `interrupted`, exactly
-like Delegate's OCR. This is the behaviour the deploy plan accepts, made visible.
+like the main app's OCR. This is the behaviour the deploy plan accepts, made visible.
 
 `fail_interrupted` assumes a single server process: next to another one it would
 mark a file that process is still working on.

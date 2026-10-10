@@ -1,7 +1,7 @@
 [project]
-name = "delegate-mock"
+name = "rootfolder-mock"
 version = "0.1.0"
-description = "A small app with Delegate's technical shape, for rehearsing the deploy"
+description = "A small app with rootfolder's technical shape, for rehearsing the deploy"
 requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.5",
@@ -46,6 +46,6 @@ known-first-party = ["app", "conftest"]
 known-third-party = ["alembic"]
 
 [tool.ruff.lint.flake8-bugbear]
-# FastAPI's dependency style, as in Delegate: these defaults are markers, not calls
+# FastAPI's dependency style, as in the main app: these defaults are markers, not calls
 # whose result is shared between requests.
 extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Query"]

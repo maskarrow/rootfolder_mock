@@ -3,7 +3,7 @@
 The only email is the test one from `POST /checks/email`. Without
 `RESEND_API_KEY` nothing is sent and the would-be email is logged at WARNING. On a
 public `APP_URL` the backend refuses to start without the key
-(`main._check_emails`), as Delegate does, where emails carry password links.
+(`main._check_emails`), as the main app does, where emails carry password links.
 """
 
 import logging

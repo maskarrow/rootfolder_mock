@@ -24,7 +24,7 @@ def test_provider_without_a_saved_key(client, anthropic):
 
     assert response.status_code == 200
     assert response.json()["ok"] is False
-    assert response.json()["detail"].startswith("No key saved")
+    assert response.json()["detail"].startswith("No Anthropic key saved")
     assert anthropic.keys == []
 
 

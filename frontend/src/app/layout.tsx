@@ -4,7 +4,7 @@ import { connection } from "next/server";
 
 import "./globals.css";
 
-/** The one web font, through `next/font/google` as in Delegate. The build downloads
+/** The one web font, through `next/font/google` as in the main app. The build downloads
  *  it, so `next build` needs internet; the page then serves it from its own origin,
  *  which the CSP requires. `latin-ext` brings the Romanian diacritics. */
 const sans = Figtree({
@@ -14,8 +14,8 @@ const sans = Figtree({
 });
 
 export const metadata: Metadata = {
-  title: "delegate-mock",
-  description: "A deploy rehearsal app with Delegate's technical shape.",
+  title: "rootfolder-mock",
+  description: "A deploy rehearsal app with rootfolder's technical shape.",
 };
 
 export default async function RootLayout({

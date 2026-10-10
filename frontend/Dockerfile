@@ -28,7 +28,7 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3000
 # `standalone` leaves out the static assets; without them the page has no CSS or
-# JavaScript. (This app has no `public/` folder; Delegate's would be copied too.)
+# JavaScript. (This app has no `public/` folder; the main app's would be copied too.)
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 USER node

@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # Empty = no email is sent; the would-be email is logged at WARNING instead.
     resend_api_key: str = ""
     # `onboarding@resend.dev` only delivers to the Resend account's own address.
-    email_from: str = "Mock <onboarding@resend.dev>"
+    email_from: str = "Rootfolder Mock <onboarding@resend.dev>"
 
     # Relative to the repo root locally, absolute on servers (the mounted volume).
     storage_dir: str = "storage"

@@ -3,10 +3,10 @@
 The key is typed in the terminal and not echoed; never passed as an argument,
 where it would stay in the shell history. Saving again replaces the old key.
 
-From the repo root:
-    just set-org-key Delegate
-or from backend/:
-    uv run python set_org_key.py --org Delegate --provider anthropic
+On the server, from /opt/rootfolder:
+    docker compose run --rm api python set_org_key.py --org Rootfolder --provider anthropic
+locally, from the repo root:
+    just set-org-key Rootfolder
 """
 
 import argparse

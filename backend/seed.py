@@ -1,4 +1,5 @@
-"""Two orgs, "Delegate" and "Demo Client", with 50 items each.
+"""Two orgs, "Rootfolder" and "Demo Client", with 50 items each. An org that does
+not exist yet is created.
 
 The texts are short Romanian notes about public tenders, with diacritics, so the
 `romanian` search configuration has real stems to work on. Embeddings are random
@@ -9,6 +10,8 @@ Idempotent: an org that already has items is left alone.
 
 From the repo root:
     just seed
+on the server, from /opt/rootfolder:
+    docker compose run --rm api python seed.py
 """
 
 import math
@@ -21,7 +24,7 @@ from app.db import SessionLocal
 from app.models.item import EMBEDDING_DIM, Item
 from app.models.org import Org
 
-ORGS = ("Delegate", "Demo Client")
+ORGS = ("Rootfolder", "Demo Client")
 
 SUBJECTS = (
     ("Reabilitarea drumului județean DJ 105", "Consiliul Județean Brașov"),
@@ -72,7 +75,7 @@ def unit_vector(rng: random.Random) -> list[float]:
 
 
 def items_for(org: Org) -> list[Item]:
-    rng = random.Random(f"delegate-mock:{org.name}")
+    rng = random.Random(f"rootfolder-mock:{org.name}")
     items = []
     for subject, authority in SUBJECTS:
         for aspect, text in ASPECTS:

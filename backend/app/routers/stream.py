@@ -1,11 +1,11 @@
-"""A streamed response shaped like Delegate's chat answer, to test the whole path
+"""A streamed response shaped like the main app's chat answer, to test the whole path
 between the browser and the API: proxy buffering, compression and read timeouts.
 
-The events, as in Delegate (`fastapi.sse`, JSON data):
+The events, as in the main app (`fastapi.sse`, JSON data):
 1. `status`, at once;
 2. `STREAM_SILENCE_S` seconds of silence, like the agent's search before the
    first word. FastAPI writes a `: ping` comment after every 15 idle seconds, as
-   it does in Delegate, so the longest gap a proxy sees is 15 s;
+   it does in the main app, so the longest gap a proxy sees is 15 s;
 3. 40 `delta` events, 150 ms apart. A buffering proxy delivers them all at once,
    at the end, which the page shows by the time of the first delta;
 4. `done`.
@@ -32,7 +32,7 @@ DELTA_INTERVAL_S = 0.15
 @router.post("/stream", response_class=EventSourceResponse)
 async def stream(db: Session = Depends(get_db)) -> AsyncIterable[ServerSentEvent]:
     # The same session the router's session check used. Closed now, or its pooled
-    # connection would stay checked out for the whole stream; Delegate's pool
+    # connection would stay checked out for the whole stream; the main app's pool
     # filled up that way at ~15 concurrent chats.
     db.close()
 

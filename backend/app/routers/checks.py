@@ -73,7 +73,14 @@ def check_provider(ctx: AuthContext = Depends(require_admin), db: Session = Depe
         select(ApiKey).where(ApiKey.org_id == ctx.user.org_id, ApiKey.provider == ANTHROPIC)
     )
     if row is None:
-        return CheckOut(ok=False, detail="No key saved. Save one with `just set-org-key <org>`.")
+        return CheckOut(
+            ok=False,
+            detail=(
+                "No Anthropic key saved for this org. On the server, from /opt/rootfolder: "
+                "docker compose run --rm api python set_org_key.py --org <org> "
+                "--provider anthropic"
+            ),
+        )
 
     try:
         key = secrets.decrypt(row.ciphertext)
@@ -95,12 +102,12 @@ def check_provider(ctx: AuthContext = Depends(require_admin), db: Session = Depe
 def check_email(ctx: AuthContext = Depends(require_admin)):
     to = ctx.user.email
     text = (
-        f"This is a test email from delegate-mock ({settings.app_env}, version "
+        f"This is a test email from rootfolder-mock ({settings.app_env}, version "
         f"{settings.app_version}, {settings.app_url}).\n\n"
         "If you are reading it, the Resend key and the sender work.\n"
     )
     try:
-        sent = emails.send(to, "delegate-mock: test email", text)
+        sent = emails.send(to, "rootfolder-mock: test email", text)
     except emails.EmailError as exc:
         return CheckOut(ok=False, detail=str(exc))
     if not sent:

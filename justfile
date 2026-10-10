@@ -33,6 +33,17 @@ seed:
 create-user email name org *flags:
     cd backend; uv run python create_user.py "{{email}}" "{{name}}" --org "{{org}}" {{flags}}
 
+list-users:
+    cd backend; uv run python list_users.py
+
+# A new password, asked in the terminal; the account is logged out everywhere.
+set-password email:
+    cd backend; uv run python set_password.py "{{email}}"
+
+# Asks to type the email again; refuses an org's last admin.
+delete-user email:
+    cd backend; uv run python delete_user.py "{{email}}"
+
 # The org's Anthropic key, asked in the terminal and stored encrypted.
 set-org-key org:
     cd backend; uv run python set_org_key.py --org "{{org}}" --provider anthropic

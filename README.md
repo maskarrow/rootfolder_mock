@@ -1,8 +1,9 @@
-# delegate-mock
+# rootfolder-mock
 
-A small app with Delegate's technical shape and none of its product. It exists so
-the deploy in Delegate's `docs/deploy/STEPS.md` can be practised end to end before
-Delegate itself goes through it.
+A small app with rootfolder's technical shape and none of its product. It exists
+so the deploy can be practised end to end, on the real server, before rootfolder
+itself goes through it. It runs at https://rootfolder.app until the real app
+replaces it.
 
 It has what matters to a deploy:
 
@@ -15,9 +16,9 @@ It has what matters to a deploy:
 
 There is no RAG, no chat and no OCR.
 
-The repo has no Dockerfiles, compose files for servers, nginx config or CI
-workflows. Those are built from `STEPS.md`, and this app must work under them
-unchanged.
+How it is deployed (the images, the server stack, nginx, the deploy script, the
+GitHub workflows) and every command used on the server is in
+[deploy/README.md](deploy/README.md).
 
 ## Quick start (local)
 
@@ -46,7 +47,7 @@ Then:
 ```bash
 just up                                             # Postgres, dependencies, migrations
 just seed                                           # two orgs, 50 items each
-just create-user you@example.com "Your Name" Delegate --admin   # asks the password twice
+just create-user you@example.com "Your Name" Rootfolder --admin   # asks the password twice
 just api                                            # backend on http://localhost:8010
 just web                                            # frontend on http://localhost:3010
 ```
@@ -61,12 +62,17 @@ http://localhost:8010/docs; they exist only while `APP_URL` is local.
 | `just web` | `next dev -p 3010` |
 | `just test` | Backend tests, on a `<db>_test` database recreated each run |
 | `just lint` | ruff check and format, eslint, `tsc --noEmit` |
-| `just seed` | The orgs "Delegate" and "Demo Client" with 50 Romanian tender notes each. Idempotent |
+| `just seed` | The orgs "Rootfolder" and "Demo Client" with 50 Romanian tender notes each. Idempotent |
 | `just create-user email name org [--admin]` | Creates the org if missing. The password is typed in the terminal, never passed as an argument |
+| `just list-users` | Every account, with role, org and whether it can log in |
+| `just set-password email` | A new password, typed in the terminal; the account is logged out everywhere |
+| `just delete-user email` | Asks to type the email again; refuses an org's last admin |
 | `just set-org-key org` | Stores the org's Anthropic key, encrypted, typed in the terminal |
 | `just cleanup` | The periodic cleanup, by hand: dead sessions, audit rows older than a year |
 
-The ports differ from Delegate's (5433, 8000, 3000), so both run side by side.
+The ports differ from the main app's (5433, 8000, 3000), so both run side by side.
+On the server the same scripts run inside the api container; see
+[deploy/README.md](deploy/README.md).
 
 ## What each part proves in a deploy
 
@@ -77,7 +83,7 @@ The ports differ from Delegate's (5433, 8000, 3000), so both run side by side.
 | 11 failed logins | The app's limit (10 per email, 50 per IP, from the audit log). With the IP wrong, the per-IP limit would block everyone at once. nginx's own login limit answers 429 earlier |
 | Retrieve items, Search, Similar | The migrations ran (`pinned` comes from the second one); prod's Postgres has pgvector (HNSW, cosine) and the `romanian` configuration |
 | Upload a 450 MB PDF, then download it | nginx's body size limit and request streaming, the storage volume mount, relative stored paths |
-| Upload, then deploy within `JOB_SECONDS` | The restart window: the file ends `interrupted`, as Delegate's documents do |
+| Upload, then deploy within `JOB_SECONDS` | The restart window: the file ends `interrupted`, as the main app's documents do |
 | Stream test | No buffering and a long enough read timeout. The page shows when the first delta and `done` arrived; if they arrive together, something on the way buffers |
 | Check provider key (admin) | Outbound HTTPS from the server, the master key, and the encrypted key in the database. Lists Anthropic's models, which bills nothing |
 | Send test email (admin) | The Resend key and sender |
@@ -102,7 +108,7 @@ The app makes these assumptions; each one fails in a recognizable way if missed.
   Run it from `backend/`. The app writes its own request lines, so uvicorn's
   access log stays off.
 - **`CORS_ORIGINS` includes the public origin** (for example
-  `https://mock.example.com`). Otherwise every POST, login included, gets
+  `https://rootfolder.app`). Otherwise every POST, login included, gets
   `403 Cross-site request refused`.
 - **A public `APP_URL` needs `RESEND_API_KEY`**, or the backend refuses to start.
   A public `APP_URL` also hides `/docs`.
@@ -144,19 +150,18 @@ The app makes these assumptions; each one fails in a recognizable way if missed.
   the default 30 s and a 30 s graceful timeout, the job may just finish during
   shutdown.
 - **One api process.** At startup, files still `processing` are marked
-  `interrupted`, as in Delegate. Next to a second process, this would mark files
+  `interrupted`, as in the main app. Next to a second process, this would mark files
   that process is still working on.
-- **Scripts run in the api image, from `backend/`**, and ask for secrets on the
-  terminal (`docker compose run --rm api ...`):
+- **Scripts run in the api image** and ask for secrets on the terminal. On the
+  server, from `/opt/rootfolder`:
 
   ```
-  uv run python create_user.py you@example.com "Your Name" --org Delegate --admin
-  uv run python set_org_key.py --org Delegate --provider anthropic
-  uv run python seed.py
-  uv run python cleanup.py
+  docker compose run --rm api python create_user.py you@example.com "Your Name" --org Rootfolder --admin
+  docker compose run --rm api python set_org_key.py --org Rootfolder --provider anthropic
+  docker compose run --rm api python seed.py
   ```
 
-  In an image without uv, run them with plain `python`.
+  The full list is in [deploy/README.md](deploy/README.md).
 
 ## Environment variables
 
@@ -174,7 +179,7 @@ The backend reads the repo-root `.env` locally; environment variables win.
 | `SESSION_IDLE_HOURS` / `SESSION_MAX_DAYS` | `8` / `30` | Idle timeout; absolute limit that activity does not extend |
 | `PASSWORD_MIN_LENGTH` | `12` | |
 | `API_KEYS_ENCRYPTION_KEY` | empty | Fernet master key for `api_keys` |
-| `RESEND_API_KEY` / `EMAIL_FROM` | empty / `Mock <onboarding@resend.dev>` | Without a key the test email is logged at WARNING. The test sender only delivers to the Resend account's own address |
+| `RESEND_API_KEY` / `EMAIL_FROM` | empty / `Rootfolder Mock <onboarding@resend.dev>` | Without a key the test email is logged at WARNING. The test sender only delivers to the Resend account's own address |
 | `STORAGE_DIR` | `storage` | Relative to the repo root locally, absolute on servers |
 | `MAX_UPLOAD_MB` | `500` | |
 | `JOB_SECONDS` | `30` | Length of the simulated job after an upload |
@@ -212,7 +217,7 @@ just lint    # ruff, eslint, tsc
 cd frontend && npm run build
 ```
 
-The backend tests follow Delegate's `conftest.py`:
+The backend tests follow the main app's `conftest.py`:
 
 - a `<db>_test` database recreated from the migrations each run, refused under any
   other name;
@@ -230,10 +235,15 @@ backend/
     routers/    auth, items, files, stream, checks
     services/   auth, audit, jobs, cleanup
   alembic/      0001 initial schema, 0002 items.pinned
-  create_user.py  set_org_key.py  seed.py  cleanup.py
+  create_user.py  list_users.py  set_password.py  delete_user.py
+  set_org_key.py  seed.py  cleanup.py
   tests/
+  Dockerfile
 frontend/
   src/proxy.ts  src/lib/api.ts  src/lib/session.ts
   src/app/      layout, page (dashboard), login
   src/components/ dashboard, login-form, logout-button
+  Dockerfile
+deploy/         the server stack, nginx, deploy.sh, certificate renewal (see its README)
+.github/workflows/  ci.yml (every push), deploy.yml (the Deploy button)
 ```

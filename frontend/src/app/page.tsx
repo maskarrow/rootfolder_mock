@@ -20,7 +20,7 @@ export default async function Home() {
     if (error instanceof ApiError && error.status === 401) redirect(loginHref("/"));
     return (
       <main>
-        <h1>delegate-mock</h1>
+        <h1>rootfolder-mock</h1>
         <p role="alert" className="error">
           The Next server could not load the dashboard from the backend.{" "}
           {error instanceof Error ? error.message : String(error)}
@@ -37,7 +37,7 @@ export default async function Home() {
     <main>
       <header className="top">
         <div>
-          <h1>delegate-mock</h1>
+          <h1>rootfolder-mock</h1>
           <p className="muted">
             {me.name} ({me.email}), {me.role} of {me.org_name}
           </p>

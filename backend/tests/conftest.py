@@ -50,7 +50,7 @@ def _test_url():
 
 
 _TEST_URL = _test_url()
-_TEST_STORAGE = tempfile.mkdtemp(prefix="delegate-mock-tests-")
+_TEST_STORAGE = tempfile.mkdtemp(prefix="rootfolder-mock-tests-")
 
 os.environ["DATABASE_URL"] = _TEST_URL.render_as_string(hide_password=False)
 os.environ["STORAGE_DIR"] = _TEST_STORAGE
@@ -304,7 +304,7 @@ def client_for(db):
 
 @pytest.fixture
 def org(make_org) -> Org:
-    return make_org("Delegate")
+    return make_org("Rootfolder")
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 """The app: middleware, startup checks, background loops, routers and health.
 
-Startup assumes a single server process, as Delegate's deploy does: files left in
+Startup assumes a single server process, as the main app's deploy does: files left in
 `processing` by the previous process are marked `interrupted` before the first
 request. Migrations never run here; the deploy runs `alembic upgrade head` once,
 before starting the new containers.
@@ -65,7 +65,7 @@ def _check_encryption_key() -> None:
 
 
 def _check_emails() -> None:
-    """A public install does not start without an email key, as in Delegate, where
+    """A public install does not start without an email key, as in the main app, where
     invites and password resets depend on it. Public is recognized by `APP_URL`."""
     if settings.resend_api_key or emails.is_local_address():
         return
@@ -102,7 +102,7 @@ def _docs_config() -> dict:
     return {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
 
-app = FastAPI(title="delegate-mock API", lifespan=lifespan, **_docs_config())
+app = FastAPI(title="rootfolder-mock API", lifespan=lifespan, **_docs_config())
 
 _ORIGINS = [origin.strip() for origin in settings.cors_origins.split(",")]
 

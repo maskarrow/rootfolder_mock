@@ -93,7 +93,7 @@ function SearchCheck() {
   return (
     <Card
       title="Search"
-      proves="Full-text search with the romanian configuration: stems match, so the singular finds the plural."
+      proves="Full-text search over the demo items (the Romanian tender notes from seed.py), not over uploaded PDFs: the mock does not read PDF content. With the romanian configuration, stems match, so the singular finds the plural."
     >
       <form
         className="row"
@@ -114,7 +114,12 @@ function SearchCheck() {
 
 async function similarToFirst() {
   const items = await listItems();
-  if (items.length === 0) throw new Error("No items yet: run `just seed`.");
+  if (items.length === 0) {
+    throw new Error(
+      "No items in your org yet. Add the demo data on the server, from /opt/rootfolder: " +
+        "docker compose run --rm api python seed.py"
+    );
+  }
   return similarItems(items[0].id);
 }
 
