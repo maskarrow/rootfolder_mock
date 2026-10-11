@@ -1,0 +1,8 @@
+[Unit]
+Description=Nightly rootfolder database dump to the storage volume
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/rootfolder/scripts/backup.sh

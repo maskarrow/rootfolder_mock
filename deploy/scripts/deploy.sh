@@ -25,6 +25,7 @@ readonly IMAGES_PREFIX='ghcr.io/maskarrow/rootfolder-mock-'
 
 readonly HEALTH_TRIES=24 # x 5 s = 2 minutes
 readonly KEEP_DUMPS=3
+readonly MIN_FREE_GB=5
 
 cd "$(dirname "$(readlink -f "$0")")/.." # /opt/rootfolder
 
@@ -53,9 +54,10 @@ if [[ ${#args[@]} -ne 2 || ! "${args[0]}" =~ $API_RE || ! "${args[1]}" =~ $WEB_R
 fi
 readonly api_image="${args[0]}" web_image="${args[1]}"
 
-# Two deploys at once would interleave migrations and restarts.
+# Two deploys at once would interleave migrations and restarts. The health watchdog
+# (scripts/heal.sh) takes the same lock for a moment each minute, hence the wait.
 exec 9>.deploy.lock
-flock -n 9 || die "another deploy is running"
+flock -w 120 9 || die "another deploy is running"
 
 [[ -f .env ]] || die "/opt/rootfolder/.env is missing"
 domain="$(env_value DOMAIN)"
@@ -69,6 +71,13 @@ readonly domain pg_user pg_db storage_mount
 # Without the volume, PDFs would land on the server's own disk and vanish with it.
 if [[ -n "$storage_mount" ]] && ! mountpoint -q "$storage_mount"; then
     die "$storage_mount is not mounted"
+fi
+
+# New images, a dump and Postgres' own writes need room; a deploy that runs out of
+# disk halfway is worse than one that never starts.
+free_gb="$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')"
+if ((free_gb < MIN_FREE_GB)); then
+    die "only ${free_gb} GB free on /; at least ${MIN_FREE_GB} GB needed (docker system df)"
 fi
 
 log "Pulling $api_image"
