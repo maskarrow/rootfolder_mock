@@ -135,24 +135,96 @@ can read `.env`, which compose needs for every command.
    docker compose run --rm api python seed.py
    ```
 
-## What each kind of change costs
+## Every kind of change, and how to do it
 
-| Kind of change | What you do | What happens |
+Two things decide the path of a change: **where it lives** (in the repo, or only on
+the server) and **whether it is structure or content**.
+
+- **In the repo, goes through the Deploy button:** application code (backend,
+  frontend) and the database's *structure* (migrations). Everything that must be
+  the same on your laptop, in CI and on the server.
+- **Only on the server, no button:** `.env`, the files in `deploy/` once copied,
+  and the database's *content* (accounts, demo data, keys).
+
+| You want to change | Where it lives | Do this | Build | Restart | Risk to know |
+|---|---|---|---|---|---|
+| **Database structure**: add a field or a table | a migration file in the repo | Edit the model, generate and review a migration, push, Deploy | yes (every commit builds both images) | `api`, `web`: seconds | None for data: the column is added, the old code ignores it |
+| **Database structure**: rename or remove a field | three migrations over three deploys | See "Renaming a field" below | yes, three times | seconds each | A one-step rename breaks the running release and the rollback |
+| **Database content**: users, demo data, a key | rows, not files | The scripts under "Accounts, demo data and keys" | no | none | None for the app; the audit log records accounts |
+| **Backend only** | `backend/` | Push, Deploy | yes | `api`, `web` | An API that gets stricter breaks the old frontend for a few seconds |
+| **Frontend only** | `frontend/` | Push, Deploy | yes | `api`, `web` | The browser tab open during a deploy asks for old files; the build ID is the version, so a refresh fixes it |
+| **Backend and frontend** | both | One commit, one Deploy | yes | `api`, `web` | While they restart, the old one talks to the new one: make API changes additive |
+| **Database, backend and frontend** | all three | One commit with the migration, the code and the UI, one Deploy | yes | `api`, `web` | The migration must work for the *old* code too (it runs before the restart) |
+| **nginx** (routing, limits, timeouts) | `deploy/nginx/` | Edit, commit, copy to the server, test, recreate nginx | no | `nginx`: ~1 s | A typo takes the whole site down; test before recreating |
+| **compose.yaml** (limits, ports, a service) | `deploy/compose.yaml` | Edit, commit, copy to the server, `docker compose up -d` | no | the services that changed | A wrong value stops a service: run `docker compose config` first |
+| **Configuration** (`.env`) | the server only | Edit, `docker compose up -d` | no | the services that read it | Not in git: keep the password manager's copy in step |
+| **deploy.sh, migrate.py** | `deploy/scripts/` | Copy to the server (below); the next Deploy uses them | no | none | The pipeline cannot update its own script |
+| **The workflows** | `.github/workflows/` | Push | no | none | Takes effect on the next run |
+| **A third-party image** (nginx, Postgres patch) | an image tag | `docker compose pull nginx db && docker compose up -d` | no | the ones that changed | Postgres *major* versions (17 to 18) need a dump and restore: a separate procedure |
+| **Server software** | Ubuntu | Automatic security updates; `sudo apt update && sudo apt full-upgrade` | no | the server, rarely | A kernel update needs a reboot |
+| **Going back** | an older commit | Deploy with that commit's full hash as the ref | no (images exist) | `api`, `web` | Migrations are skipped; the older code runs on the newer schema |
+| **GitHub secrets** (deploy key, host) | GitHub settings | Replace the secret; for the key also replace the line in `/home/deploy/.ssh/authorized_keys` | no | none | A wrong value shows up at the next deploy, not before |
+
+### How a database change is made
+
+Always from the repo, never by typing SQL on the server. A change made by hand is
+not recorded: your laptop and CI no longer match the server, `alembic check` fails,
+and the next migration can collide with it. The server's database has one history,
+the migration files, and the deploy is what applies them.
+
+1. Change the model in `backend/app/models/`.
+2. Generate the migration, from `backend/`:
+
+   ```bash
+   uv run alembic revision --autogenerate -m "add items.category"
+   ```
+
+3. **Read the generated file.** Autogenerate does not understand a rename: it
+   writes "drop the old column, add a new one", which deletes the data. Check what
+   it does to existing rows, and add the `UPDATE` that fills a new column if needed
+   (migration 0003 is the example).
+4. `just test` (it climbs all migrations from zero) and `alembic check`.
+5. Commit, push, Deploy. `deploy.sh` dumps the database first (`backups/`), then
+   runs the migration once, then restarts.
+
+### Renaming a field, without breaking anything
+
+Renaming `items.title` to `items.name`, over three releases. At each step the
+previous release still works on the new schema, so a rollback is always possible.
+
+| Release | Migration | Code |
 |---|---|---|
-| **Code** (frontend, backend, a small fix) | Push to `main`, press Deploy | Both images are rebuilt (the version is baked into both, so a commit always rebuilds them), the server pulls them, and `api` and `web` are recreated: seconds of downtime. The database is untouched. |
-| **Code and a migration** | The same | Before anything else `deploy.sh` dumps the database to `backups/`, then runs the migration once with the new image, then recreates the containers. Existing data stays and is changed by the migration (0003 fills `last_login_at` from the audit log). |
-| **Only the database's data** (accounts, demo data, a key) | The scripts under "Accounts, demo data and keys" | No deploy, no build, no restart. |
-| **Configuration** (`.env`) | Edit `.env`, then `docker compose up -d` | Only the containers whose configuration changed are recreated. No build, no GitHub. |
-| **Server files** (`deploy/`: compose, nginx, scripts) | Copy them to the server (below) | Not part of the Deploy button: the pipeline can only run `deploy.sh`. |
-| **Going back** | Deploy again with an older commit as the ref | The images already exist, so no build. Migrations are skipped when the database is ahead of the image (older code runs on the newer schema because migrations only add). |
+| 1 (expand) | Add `name`, copy `title` into it | Writes both columns, reads `title` |
+| 2 (switch) | none | Reads and writes only `name` |
+| 3 (contract) | Drop `title` | none |
 
-The rule that makes this safe: **a migration only adds** (a column, a table, an
-index) and never removes or renames in the same release. What you remove goes in a
-later release, once no running code uses it.
+The shortcut, `RENAME COLUMN` in one release, is instant in Postgres, but the old
+containers are still running while the migration runs, so every request that
+touches the field fails until the restart, and going back to the previous release
+is no longer possible. For this mock, which tolerates seconds of downtime, you may
+accept that for a field nobody uses; do not do it for one that is.
 
-### Updating the scripts or the stack files on the server
+### Changing nginx or the stack, safely
 
-From the laptop, in the repo folder, for the two scripts:
+On the laptop, edit the file under `deploy/` and commit it. Copy it to the server
+(see below), then:
+
+```bash
+docker compose run --rm --no-deps nginx nginx -t
+```
+
+It checks the new configuration in a throwaway container; the running nginx is not
+touched. Only if it prints `test is successful`:
+
+```bash
+docker compose up -d --force-recreate nginx
+```
+
+For `compose.yaml`, `docker compose config` checks it, then `docker compose up -d`.
+
+### Updating files on the server
+
+From the laptop, in the repo folder:
 
 ```bash
 scp deploy/scripts/deploy.sh deploy/scripts/migrate.py alex@2.31.2.210:~/
@@ -165,9 +237,15 @@ sudo install -o deploy -g deploy -m 755 ~/deploy.sh ~/migrate.py /opt/rootfolder
 rm ~/deploy.sh ~/migrate.py
 ```
 
-For `compose.yaml` or `nginx/`, copy them the same way into `/opt/rootfolder/`,
-then `docker compose up -d` (and `docker compose up -d --force-recreate nginx` if
-only the nginx configuration changed).
+`compose.yaml` and `nginx/` are copied the same way, into `/opt/rootfolder/` and
+`/opt/rootfolder/nginx/`.
+
+### Going back to an older release
+
+Find its full commit hash (`git log -1 --format=%H <short hash>` on the laptop),
+then Actions > Deploy > Run workflow with that hash in the "ref" field. The images
+for that commit already exist, so the build is a check, not a build. Then deploy
+`main` again to come back.
 
 ## Accounts, demo data and keys
 
@@ -197,7 +275,7 @@ A member sees everything except the two admin checks (provider key, test email).
 | A deploy by hand | `sudo -u deploy scripts/deploy.sh <api>@sha256:... <web>@sha256:...` |
 | Back to an older release | Actions > Deploy with the older commit as the ref (or by hand, with the two images from its line in `deploy.log`) |
 | A changed `.env` | `docker compose up -d` |
-| Changed files in `deploy/` | see "Updating the scripts or the stack files on the server" |
+| Changed files in `deploy/` | see "Updating files on the server" and "Changing nginx or the stack, safely" |
 | A database shell | `docker compose exec db psql -U rootfolder rootfolder` |
 | Restore a dump | `docker compose exec -T db pg_restore -U rootfolder -d rootfolder --clean < backups/<file>.dump` |
 
