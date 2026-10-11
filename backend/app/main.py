@@ -161,7 +161,9 @@ def health_ready():
     wait and the proxy can tell."""
     try:
         with engine.connect() as conn:
-            conn.execute(text("select 1"))
+            # A real table, not `select 1`: it also proves the app's database role can
+            # read, so a missing grant fails the deploy's health check, not a user.
+            conn.execute(text("SELECT 1 FROM users LIMIT 1"))
     except Exception as exc:
         # One line, not a traceback: probes repeat every few seconds during an outage.
         # The first line says why (refused, wrong password, unknown host) without the

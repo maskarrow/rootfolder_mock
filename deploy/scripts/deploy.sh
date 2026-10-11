@@ -93,6 +93,8 @@ write_override() {
 services:
   api:
     image: $1
+  migrate:
+    image: $1
   web:
     image: $2
 EOF
@@ -129,9 +131,11 @@ ls -1t backups/*.dump | tail -n +$((KEEP_DUMPS + 1)) | xargs -r rm --
 write_override "$api_image" "$web_image"
 
 log "Running the migrations"
-# scripts/migrate.py runs `alembic upgrade head`, or skips it when the database is
-# already ahead of this image (a rollback to an older release).
-if ! docker compose run --rm --no-deps -T api python - <scripts/migrate.py; then
+# scripts/migrate.py runs `alembic upgrade head` (or skips it when the database is
+# already ahead of this image: a rollback to an older release), then applies the
+# app role's grants. The `migrate` service is the api image with the database
+# owner's credentials, which the api itself never receives.
+if ! docker compose run --rm --no-deps -T migrate python - <scripts/migrate.py; then
     # The containers still run the previous release; only its record changes back.
     [[ -n "$previous" ]] && printf '%s\n' "$previous" >compose.override.yaml
     die "migrations failed; the running release is unchanged"

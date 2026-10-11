@@ -39,11 +39,18 @@ services:
     # The tag here is a placeholder: compose.override.yaml, written by deploy.sh,
     # pins the exact image by digest.
     image: ghcr.io/maskarrow/rootfolder-mock-api
-    env_file: .env
+    # An explicit list, not `env_file: .env`: the api must not receive the database
+    # owner's password. It connects as APP_DB_USER, which may only read and write
+    # rows (deploy/scripts/migrate.py creates it).
     environment:
-      # Built here so the password lives in one place (.env). It must be URL-safe:
-      # generate it with `openssl rand -hex 32`.
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:?}:${APP_DB_PASSWORD:?}@db:5432/${POSTGRES_DB}
+      APP_ENV: ${APP_ENV:-prod}
+      APP_URL: ${APP_URL:?}
+      CORS_ORIGINS: ${CORS_ORIGINS:?}
+      API_KEYS_ENCRYPTION_KEY: ${API_KEYS_ENCRYPTION_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Rootfolder Mock <onboarding@resend.dev>}
+      JOB_SECONDS: ${JOB_SECONDS:-30}
       # Absolute: in the image the project root is `/`, and a relative path would
       # point where the non-root user cannot write.
       STORAGE_DIR: /data/storage
@@ -59,6 +66,24 @@ services:
     restart: unless-stopped
     networks: [internal]
     mem_limit: 1536m
+    # No Linux capabilities, no privilege gain, a cap on processes: code that went
+    # wrong (or was made to) can do little beyond what the app user already can.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+
+  # Migrations and the app role's grants, as the database owner. Never left running:
+  # deploy.sh starts it once per deploy (`docker compose run --rm migrate ...`).
+  migrate:
+    image: ghcr.io/maskarrow/rootfolder-mock-api
+    profiles: [tools]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      APP_DB_USER: ${APP_DB_USER:?}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?}
+    networks: [internal]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
 
   web:
     image: ghcr.io/maskarrow/rootfolder-mock-web
@@ -70,6 +95,9 @@ services:
     restart: unless-stopped
     networks: [internal]
     mem_limit: 768m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
 
   nginx:
     image: nginx:stable-alpine

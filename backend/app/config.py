@@ -15,6 +15,15 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
 
     database_url: str
+    # Pool per process: 10 kept open, up to 20 more at peaks. Below Postgres' default
+    # of 100 connections. A request waits at most 10 s for a free one, then fails
+    # with an error instead of hanging: a full pool must be visible.
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout_s: int = 10
+    # Any single query is cancelled after this; a runaway query cannot hold a
+    # connection, and with it the pool, forever. Migrations and dumps do not use it.
+    db_statement_timeout_ms: int = 30_000
 
     # `local`, `dev` or `prod`. Only reported (logs, health), never branched on:
     # behaviour that differs in public follows `app_url` instead.

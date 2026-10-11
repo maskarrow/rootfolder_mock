@@ -97,4 +97,8 @@ def download(
         raise HTTPException(
             status_code=404, detail="The file is recorded but missing from STORAGE_DIR."
         )
-    return FileResponse(path, media_type="application/pdf", filename=row.filename)
+    filename = row.filename
+    # Released before the file is sent: a 450 MB download to a slow client takes
+    # minutes, and a few of them at once would otherwise hold the whole pool.
+    db.close()
+    return FileResponse(path, media_type="application/pdf", filename=filename)
