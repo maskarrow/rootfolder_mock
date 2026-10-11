@@ -43,6 +43,10 @@ def save_upload(file: UploadFile, *, max_mb: int) -> tuple[str, int]:
     """Writes the upload to the storage. Returns the stored name and the size."""
     if not file.filename:
         raise UploadValidationError("The file name is missing.")
+    # Control characters (NUL, CR, LF...) have no place in a name that is stored and
+    # sent back in a header; refused before anything is written to disk.
+    if any(ord(char) < 32 or ord(char) == 127 for char in file.filename):
+        raise UploadValidationError("The file name contains control characters.")
     ext = Path(file.filename).suffix.lower()
     if ext != ALLOWED_EXTENSION:
         raise UploadValidationError(f"Only {ALLOWED_EXTENSION} files are accepted.")

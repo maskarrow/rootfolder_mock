@@ -11,10 +11,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from anyio import to_thread
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import DataError
 
 from app import emails, logs, secrets
 from app.config import settings
@@ -119,6 +120,16 @@ app.add_middleware(
 app.add_middleware(logs.RequestLog)
 # Outermost, so every response above also gets the headers.
 app.add_middleware(SecurityHeaders)
+
+
+@app.exception_handler(DataError)
+async def _data_rejected(request: Request, exc: DataError) -> JSONResponse:
+    """A value Postgres refuses (a NUL byte in any text) is the request's fault, not
+    the server's: without this, one byte in a login form was an unauthenticated 500.
+    The value itself is not logged."""
+    logger.info("Value rejected by the database on %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "The request contains forbidden characters."}, status_code=422)
+
 
 # The only router without a mandatory session: login is the way to get one.
 app.include_router(auth.router)

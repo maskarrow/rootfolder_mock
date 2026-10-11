@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -43,8 +43,10 @@ _TOO_MANY = "Too many failed attempts. Try again in 15 minutes."
 
 
 class LoginIn(BaseModel):
-    email: str
-    password: str
+    # Bounded: a failed login stores its email in the audit log, so an unbounded
+    # field let every attempt write megabytes. 320 is the longest valid address.
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=auth.PASSWORD_MAX)
     remember: bool = False
 
 

@@ -62,7 +62,13 @@ def upload(
         status=PROCESSING,
     )
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        # The file is already on disk; without its row nothing would ever find or
+        # delete it.
+        storage.path_of(stored_path).unlink(missing_ok=True)
+        raise
     logger.info("File %s stored: %s bytes", row.id, size)
     background_tasks.add_task(jobs.run, row.id)
     return row
