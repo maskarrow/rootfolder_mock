@@ -1,8 +1,10 @@
-# Deploy, started by hand from the Actions tab.
+# Deploy. Started by hand from the Actions tab, or by pushing a version tag (v*):
+# `git tag v1.0.0 && git push origin v1.0.0` deploys that commit.
 #
-# 0. verify: resolves the chosen ref to one commit, and refuses it unless it is on
-#    main. Every later job uses that commit, so a push to main during the deploy
-#    cannot slip a different, untested commit in. Then the CI checks (ci.yml:
+# 0. verify: resolves the chosen ref (the button's input, or the pushed tag) to one
+#    commit, and refuses it unless it is on main. Every later job uses that commit,
+#    so a push to main during the deploy cannot slip a different, untested commit
+#    in, and a tag on some other branch is turned away. Then the CI checks (ci.yml:
 #    tests, lint, build, secrets, known vulnerabilities) run on it.
 # 1. build: on an ARM runner (the server is a Hetzner CAX, ARM), builds the api and
 #    web images for the chosen commit, tagged `sha-<commit>`, and pushes them to
@@ -26,6 +28,10 @@
 name: Deploy
 
 on:
+  # A version tag deploys the commit it points at:
+  #   git tag v1.2.3 && git push origin v1.2.3
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       ref:
@@ -57,14 +63,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          # The button's input, or the pushed tag when there is no input.
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
           persist-credentials: false
       - name: The commit is on main
         id: resolve
         run: |
           sha="$(git rev-parse HEAD)"
-          if ! git merge-base --is-ancestor "$sha" origin/main; then
+          # Fetch main explicitly: a tag checkout does not set up origin/main on its
+          # own, so FETCH_HEAD is how both triggers compare against main's tip.
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$sha" FETCH_HEAD; then
             echo "::error::${sha:0:7} is not on main. Merge it into main first; only main is deployed."
             exit 1
           fi
