@@ -31,3 +31,5 @@ class User(Base):
     role: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Added by migration 0003; set at every login, empty until the first one.
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

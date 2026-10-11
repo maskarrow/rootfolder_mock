@@ -234,7 +234,7 @@ backend/
     models/     orgs, users, user_sessions, audit_log, items, files, api_keys
     routers/    auth, items, files, stream, checks
     services/   auth, audit, jobs, cleanup
-  alembic/      0001 initial schema, 0002 items.pinned
+  alembic/      0001 initial schema, 0002 items.pinned, 0003 users.last_login_at
   create_user.py  list_users.py  set_password.py  delete_user.py
   set_org_key.py  seed.py  cleanup.py
   tests/

@@ -10,7 +10,8 @@
 # arguments; deploy.log lists the images of every past release, for rollbacks.
 #
 # Steps: check the storage mount, pull the images, dump the database, run the
-# migrations once with the new image, recreate the containers, wait until
+# migrations once with the new image (scripts/migrate.py: skipped when the database
+# is already ahead of the image), recreate the containers, wait until
 # /health/ready answers through nginx with the new version, and go back to the
 # previous images if it does not. The database is never rolled back: migrations
 # only add, so the previous release runs on the new schema.
@@ -128,7 +129,9 @@ ls -1t backups/*.dump | tail -n +$((KEEP_DUMPS + 1)) | xargs -r rm --
 write_override "$api_image" "$web_image"
 
 log "Running the migrations"
-if ! docker compose run --rm --no-deps -T api alembic upgrade head; then
+# scripts/migrate.py runs `alembic upgrade head`, or skips it when the database is
+# already ahead of this image (a rollback to an older release).
+if ! docker compose run --rm --no-deps -T api python - <scripts/migrate.py; then
     # The containers still run the previous release; only its record changes back.
     [[ -n "$previous" ]] && printf '%s\n' "$previous" >compose.override.yaml
     die "migrations failed; the running release is unchanged"

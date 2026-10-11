@@ -112,6 +112,7 @@ def open_session(db: Session, user: User) -> str:
             expires_at=moment + timedelta(days=settings.session_max_days),
         )
     )
+    user.last_login_at = moment
     db.commit()
     return token
 

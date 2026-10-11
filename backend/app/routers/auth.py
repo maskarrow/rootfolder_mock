@@ -17,7 +17,7 @@ IP and the scheme precisely so a deploy can check it.
 
 import logging
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -59,6 +59,7 @@ class MeOut(BaseModel):
     # and `https`; otherwise the proxy's address, or `http`.
     seen_ip: str | None
     scheme: str
+    last_login_at: datetime | None
 
 
 def _ip(request: Request) -> str | None:
@@ -80,6 +81,7 @@ def _me(db: Session, user: User, request: Request) -> MeOut:
         org_name=org.name if org else "",
         seen_ip=_ip(request),
         scheme=request.url.scheme,
+        last_login_at=user.last_login_at,
     )
 
 

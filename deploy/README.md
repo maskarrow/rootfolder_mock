@@ -18,7 +18,8 @@ push to main ──> CI (.github/workflows/ci.yml): ruff, pytest on Postgres,
                 1. stops if the storage volume is not mounted
                 2. pulls both images
                 3. dumps the database to backups/ (keeps 3)
-                4. runs `alembic upgrade head` once, with the new api image
+                4. runs the migrations once, with the new api image (scripts/migrate.py:
+                   skipped when the database is already ahead of the image)
                 5. recreates api and web, waits until they are healthy
                 6. waits for https://rootfolder.app/api/health/ready to report
                    the new version, through nginx
@@ -134,6 +135,40 @@ can read `.env`, which compose needs for every command.
    docker compose run --rm api python seed.py
    ```
 
+## What each kind of change costs
+
+| Kind of change | What you do | What happens |
+|---|---|---|
+| **Code** (frontend, backend, a small fix) | Push to `main`, press Deploy | Both images are rebuilt (the version is baked into both, so a commit always rebuilds them), the server pulls them, and `api` and `web` are recreated: seconds of downtime. The database is untouched. |
+| **Code and a migration** | The same | Before anything else `deploy.sh` dumps the database to `backups/`, then runs the migration once with the new image, then recreates the containers. Existing data stays and is changed by the migration (0003 fills `last_login_at` from the audit log). |
+| **Only the database's data** (accounts, demo data, a key) | The scripts under "Accounts, demo data and keys" | No deploy, no build, no restart. |
+| **Configuration** (`.env`) | Edit `.env`, then `docker compose up -d` | Only the containers whose configuration changed are recreated. No build, no GitHub. |
+| **Server files** (`deploy/`: compose, nginx, scripts) | Copy them to the server (below) | Not part of the Deploy button: the pipeline can only run `deploy.sh`. |
+| **Going back** | Deploy again with an older commit as the ref | The images already exist, so no build. Migrations are skipped when the database is ahead of the image (older code runs on the newer schema because migrations only add). |
+
+The rule that makes this safe: **a migration only adds** (a column, a table, an
+index) and never removes or renames in the same release. What you remove goes in a
+later release, once no running code uses it.
+
+### Updating the scripts or the stack files on the server
+
+From the laptop, in the repo folder, for the two scripts:
+
+```bash
+scp deploy/scripts/deploy.sh deploy/scripts/migrate.py alex@2.31.2.210:~/
+```
+
+On the server:
+
+```bash
+sudo install -o deploy -g deploy -m 755 ~/deploy.sh ~/migrate.py /opt/rootfolder/scripts/
+rm ~/deploy.sh ~/migrate.py
+```
+
+For `compose.yaml` or `nginx/`, copy them the same way into `/opt/rootfolder/`,
+then `docker compose up -d` (and `docker compose up -d --force-recreate nginx` if
+only the nginx configuration changed).
+
 ## Accounts, demo data and keys
 
 None of these needs a deploy: the scripts run inside a one-off api container, on
@@ -160,9 +195,9 @@ A member sees everything except the two admin checks (provider key, test email).
 | Logs, live | `docker compose logs -f api` (or `web`, `nginx`, `db`) |
 | Which release runs | `tail -n 3 deploy.log` |
 | A deploy by hand | `sudo -u deploy scripts/deploy.sh <api>@sha256:... <web>@sha256:...` |
-| Back to an older release | the same, with the two images from its line in `deploy.log` |
+| Back to an older release | Actions > Deploy with the older commit as the ref (or by hand, with the two images from its line in `deploy.log`) |
 | A changed `.env` | `docker compose up -d` |
-| Changed files in `deploy/` | copy them as in step 1, then `docker compose up -d --force-recreate nginx` if nginx changed |
+| Changed files in `deploy/` | see "Updating the scripts or the stack files on the server" |
 | A database shell | `docker compose exec db psql -U rootfolder rootfolder` |
 | Restore a dump | `docker compose exec -T db pg_restore -U rootfolder -d rootfolder --clean < backups/<file>.dump` |
 

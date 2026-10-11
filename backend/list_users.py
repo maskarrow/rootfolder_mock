@@ -27,10 +27,11 @@ def main() -> int:
     if not rows:
         print("No accounts yet.")
         return 0
-    print(f"{'EMAIL':<36} {'NAME':<24} {'ROLE':<7} {'ORG':<16} ACTIVE")
+    print(f"{'EMAIL':<36} {'NAME':<24} {'ROLE':<7} {'ORG':<16} {'ACTIVE':<7} LAST LOGIN (UTC)")
     for user, org_name in rows:
         active = "yes" if user.is_active else "no"
-        print(f"{user.email:<36} {user.name:<24} {user.role:<7} {org_name:<16} {active}")
+        last = user.last_login_at.strftime("%Y-%m-%d %H:%M") if user.last_login_at else "never"
+        print(f"{user.email:<36} {user.name:<24} {user.role:<7} {org_name:<16} {active:<7} {last}")
     return 0
 
 
