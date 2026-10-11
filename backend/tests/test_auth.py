@@ -81,14 +81,36 @@ def test_every_failure_gets_the_same_401(anon_client, make_user, org, admin, db)
     assert failed == 3
 
 
-def test_ten_failures_per_email_block_even_the_right_password(anon_client, admin, db):
-    _failures(db, 10, email=admin.email)
+def test_ten_failures_for_an_email_from_one_ip_block_even_the_right_password(
+    anon_client, admin, db
+):
+    _failures(db, 10, email=admin.email, ip="testclient")
 
     response = _login(anon_client, admin.email)
 
     assert response.status_code == 429
     # Blocked attempts are not logged, or an attack would extend its own block.
     assert db.scalar(select(func.count()).select_from(AuditEntry)) == 10
+
+
+def test_failures_from_another_ip_do_not_lock_the_user_out(anon_client, admin, db):
+    # Someone elsewhere typing wrong passwords for this email.
+    _failures(db, 10, email=admin.email, ip="203.0.113.7")
+
+    assert _login(anon_client, admin.email).status_code == 200
+
+
+def test_a_hundred_failures_from_many_ips_block_the_email_everywhere(anon_client, admin, db):
+    at = auth.now() - timedelta(minutes=1)
+    for n in range(100):
+        db.add(
+            AuditEntry(
+                event=audit.LOGIN_FAILED, email=admin.email, ip=f"198.51.100.{n}", created_at=at
+            )
+        )
+    db.commit()
+
+    assert _login(anon_client, admin.email).status_code == 429
 
 
 def test_fifty_failures_per_ip_block_everyone_from_it(anon_client, admin, db):
@@ -98,7 +120,7 @@ def test_fifty_failures_per_ip_block_everyone_from_it(anon_client, admin, db):
 
 
 def test_old_failures_do_not_count(anon_client, admin, db):
-    _failures(db, 10, email=admin.email, minutes_ago=16)
+    _failures(db, 10, email=admin.email, ip="testclient", minutes_ago=16)
 
     assert _login(anon_client, admin.email).status_code == 200
 

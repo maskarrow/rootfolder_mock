@@ -28,6 +28,13 @@ map $request_method $upload_key {
     default "";
 }
 
+# An upload without a session cookie is refused at the door, before its body (up
+# to 510 MB) crosses to the api. The api would refuse it too, also before reading.
+map "$request_method:$cookie_mock_session" $anonymous_upload {
+    "POST:" 1;
+    default 0;
+}
+
 limit_req_zone $binary_remote_addr zone=api_ip:10m rate=100r/s;
 limit_req_zone $session_key zone=api_session:10m rate=20r/s;
 # Login costs an argon2 hash each time; the app also blocks after 10 failures per
@@ -138,6 +145,16 @@ server {
     proxy_set_header X-Forwarded-Host $host;
     proxy_set_header X-Request-ID $request_id;
 
+    # An encoded slash, dot or backslash in the path (%2f, %2e, %5c): the building
+    # blocks of path traversal, never part of a real path here. Refused at the server
+    # level, before any location or rewrite runs -- left to the rewrite + variable
+    # upstream below they make nginx answer 500 instead of refusing cleanly. The
+    # `^[^?]*` stops at the query string, so an encoded slash inside a ?q= search is
+    # untouched. (A bare `if` with `return` is one of its safe uses.)
+    if ($request_uri ~* "^[^?]*%(2[ef]|5c)") {
+        return 400;
+    }
+
     # No dotfiles anywhere (.env, .git, ...): nothing here should serve them.
     location ~ /\. {
         return 404;
@@ -152,6 +169,9 @@ server {
     # Listing (GET) has the normal limits; uploading (POST) also these: 12 a minute
     # and 4 at the same time per IP.
     location = /api/files {
+        if ($anonymous_upload) {
+            return 401;
+        }
         limit_req zone=api_ip burst=200 nodelay;
         limit_req zone=api_session burst=40 nodelay;
         limit_req zone=upload burst=6 nodelay;
@@ -190,6 +210,14 @@ server {
         add_header Strict-Transport-Security "max-age=31536000" always;
         rewrite ^/api/(.*)$ /$1 break;
         proxy_pass http://$api;
+    }
+
+    # The app has no images, so Next's image optimizer at /_next/image is only a way
+    # to make the Next server fetch a URL (a small same-origin SSRF, and a 500 when
+    # the target is not an image). `unoptimized` in next.config disables the
+    # component, not this route, so it is closed here where nginx fronts everything.
+    location = /_next/image {
+        return 404;
     }
 
     location / {

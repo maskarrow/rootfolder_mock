@@ -313,3 +313,23 @@ def test_unknown_ids_reveal_nothing(client):
 
     assert response.status_code == 404
     assert str(random_id) not in response.text
+
+
+def test_a_number_json_cannot_express_is_a_422_not_a_500(anon_client):
+    response = anon_client.post(
+        "/auth/login",
+        content=b'{"email": "a@b.c", "password": "x", "remember": 1e999}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_validation_errors_never_echo_what_was_sent(anon_client):
+    secret = "my-real-password-" + "x" * 1100
+
+    response = anon_client.post("/auth/login", json={"email": "a@b.c", "password": secret})
+
+    assert response.status_code == 422
+    assert "my-real-password" not in response.text
+    assert response.json()["detail"][0]["loc"] == ["body", "password"]

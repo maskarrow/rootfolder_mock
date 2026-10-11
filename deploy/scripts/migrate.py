@@ -20,19 +20,30 @@ history, and is not a superuser, so it cannot run programs on the server through
 Postgres (`COPY ... PROGRAM`). A bug that lets SQL through the app is then limited
 to rows. The grants are applied on every run, so a table added by a migration is
 covered at once; without APP_DB_USER (local development) this part is skipped.
+
+Locks: a migration that changes a table waits for the queries using it, and every
+query that arrives after it waits behind the migration. So it gives up after
+MIGRATION_LOCK_TIMEOUT (5 s, alembic/env.py), everything it did is rolled back, and
+this script tries again a few times. If the table stays busy the deploy stops with
+the running release untouched; nothing is half done.
 """
 
 import os
 import sys
+import time
 
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
+from psycopg import errors as pg_errors
 from psycopg import sql
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 
 from app.db import engine
+
+LOCK_ATTEMPTS = int(os.environ.get("MIGRATION_LOCK_ATTEMPTS", "6"))
 
 
 def migrate() -> None:
@@ -60,7 +71,24 @@ def migrate() -> None:
         )
         return
 
-    command.upgrade(config, "head")
+    for attempt in range(1, LOCK_ATTEMPTS + 1):
+        try:
+            command.upgrade(config, "head")
+            break
+        except OperationalError as exc:
+            if not isinstance(exc.orig, pg_errors.LockNotAvailable):
+                raise
+            if attempt == LOCK_ATTEMPTS:
+                sys.exit(
+                    f"A table stayed in use through {LOCK_ATTEMPTS} attempts; the migration "
+                    "gave up and nothing was changed. Deploy again when it is quieter."
+                )
+            print(
+                f"A table is in use; the migration rolled back and tries again in 5 s "
+                f"({attempt}/{LOCK_ATTEMPTS}).",
+                flush=True,
+            )
+            time.sleep(5)
     print("Migrations are up to date.")
 
 

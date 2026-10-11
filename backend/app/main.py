@@ -12,12 +12,15 @@ from contextlib import asynccontextmanager
 
 from anyio import to_thread
 from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.exc import DataError
+from sqlalchemy.exc import DataError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from app import emails, logs, secrets
+from app.admission import Admission
 from app.config import settings
 from app.db import SessionLocal, engine
 from app.deps import get_auth
@@ -116,6 +119,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Outside CORS and the app, inside the log: a request turned away when the app is
+# full still gets its log line (503).
+app.add_middleware(Admission, limit=settings.admission_limit, wait_s=settings.admission_wait_s)
 # Outside CORS, so preflights and `CheckOrigin` refusals get a log line too.
 app.add_middleware(logs.RequestLog)
 # Outermost, so every response above also gets the headers.
@@ -129,6 +135,39 @@ async def _data_rejected(request: Request, exc: DataError) -> JSONResponse:
     The value itself is not logged."""
     logger.info("Value rejected by the database on %s %s", request.method, request.url.path)
     return JSONResponse({"detail": "The request contains forbidden characters."}, status_code=422)
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """A 422 that says where and what is wrong, never the value that was sent.
+    FastAPI's own echoes the value: a too-long password came back in the response,
+    and a number JSON cannot express (`1e999` parses as infinity) made that response
+    fail to serialize, an unauthenticated 500 (found by loadtest/attack.py)."""
+    errors = [
+        {"loc": list(error["loc"]), "msg": error["msg"], "type": error["type"]}
+        for error in exc.errors()
+    ]
+    return JSONResponse({"detail": errors}, status_code=422)
+
+
+@app.exception_handler(PoolTimeoutError)
+@app.exception_handler(OperationalError)
+async def _database_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    """The database is down, every pooled connection stayed busy for longer than
+    DB_POOL_TIMEOUT_S, or a query ran past DB_STATEMENT_TIMEOUT_MS. Under a burst of
+    traffic that is the server being full, not broken: a 503 with Retry-After tells
+    the client to come back, where a 500 with a traceback per request would flood the
+    log. One line says which of the three; only the first line of the error, as the
+    rest can hold the query's parameters."""
+    reason = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    logger.warning(
+        "Database unavailable on %s %s: %s", request.method, request.url.path, reason[:300]
+    )
+    return JSONResponse(
+        {"detail": "The service is busy. Try again in a moment."},
+        status_code=503,
+        headers={"Retry-After": "5"},
+    )
 
 
 # The only router without a mandatory session: login is the way to get one.
@@ -149,9 +188,14 @@ def _health() -> dict:
 
 
 @app.get("/health/live")
-def health_live():
+async def health_live():
     """The process answers. Never touches the database, so a database outage does
-    not make the orchestrator restart a healthy API."""
+    not make the orchestrator restart a healthy API.
+
+    `async`, so it is answered on the event loop: a plain `def` waits for one of the
+    thread pool's 40 threads, which a burst of slow database requests can all hold.
+    The health check would then time out and the watchdog restart a busy, healthy
+    API in the middle of the burst."""
     return _health()
 
 

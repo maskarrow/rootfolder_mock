@@ -21,6 +21,7 @@ LOGOUT = "logout"
 ACCOUNT_CREATED = "account_created"
 PASSWORD_SET = "password_set"
 ACCOUNT_DELETED = "account_deleted"
+FILES_DELETED = "files_deleted"
 
 
 def write(

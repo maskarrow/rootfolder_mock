@@ -1,12 +1,15 @@
 """Upload with a cap, relative stored paths, download, and the job."""
 
+import asyncio
 import re
 
 from sqlalchemy import func, select
 
 from app import storage
 from app.config import settings
+from app.main import app
 from app.models.file import File
+from app.services import auth
 
 PDF = b"%PDF-1.4\n" + b"0" * 2048 + b"\n%%EOF\n"
 
@@ -36,6 +39,110 @@ def test_upload_stores_a_relative_name_and_runs_the_job(client, db):
     # returning.
     assert row.status == "done"
     assert row.finished_at is not None
+
+
+def test_uploads_pause_when_the_storage_is_almost_full(client, db, monkeypatch):
+    almost_full = settings.upload_min_free_mb + settings.max_upload_mb - 1
+    monkeypatch.setattr(storage, "free_mb", lambda: almost_full)
+    before = _stored_files()
+
+    response = _upload(client)
+
+    assert response.status_code == 507
+    assert db.scalar(select(func.count()).select_from(File)) == 0
+    assert _stored_files() == before
+
+
+def _post_raw(chunks: list[bytes], headers: list[tuple[bytes, bytes]]) -> tuple[int, int]:
+    """POST /files straight through the ASGI app, without the test client, which
+    would read the whole body itself. Returns the status and how many of the chunks
+    the app read."""
+    read = 0
+    status = 0
+
+    async def receive():
+        nonlocal read
+        if read < len(chunks):
+            read += 1
+            return {
+                "type": "http.request",
+                "body": chunks[read - 1],
+                "more_body": read < len(chunks),
+            }
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        nonlocal status
+        if message["type"] == "http.response.start":
+            status = message["status"]
+
+    origin = settings.cors_origins.split(",")[0].strip().encode()
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/files",
+        "raw_path": b"/files",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), (b"origin", origin), *headers],
+        "client": ("203.0.113.5", 40000),
+        "server": ("testserver", 80),
+    }
+    asyncio.run(app(scope, receive, send))
+    return status, read
+
+
+def test_an_anonymous_upload_is_refused_before_its_body_is_read():
+    """FastAPI parses a form body before it runs any dependency: with `file:
+    UploadFile` in the signature, anyone could make the server store 500 MB per
+    request before the session check answered 401."""
+    chunks = [
+        b'--b\r\nContent-Disposition: form-data; name="file"; filename="x.pdf"\r\n\r\n',
+        *[b"0" * 65536] * 64,
+        b"\r\n--b--\r\n",
+    ]
+
+    status, read = _post_raw(chunks, [(b"content-type", b"multipart/form-data; boundary=b")])
+
+    assert status == 401
+    assert read == 0
+
+
+def test_a_declared_size_above_the_cap_is_refused_before_reading(client):
+    session = f"{auth.COOKIE}={client.cookies.get(auth.COOKIE)}".encode()
+    too_large = str((settings.max_upload_mb + 20) * 1024 * 1024).encode()
+
+    status, read = _post_raw(
+        [b"0" * 65536] * 4,
+        [
+            (b"cookie", session),
+            (b"content-type", b"multipart/form-data; boundary=b"),
+            (b"content-length", too_large),
+        ],
+    )
+
+    assert status == 413
+    assert read == 0
+
+
+def test_one_file_per_upload(client, db):
+    part = (
+        b'--b\r\nContent-Disposition: form-data; name="file"; filename="x.pdf"\r\n\r\n'
+        + PDF
+        + b"\r\n"
+    )
+
+    response = client.post(
+        "/files",
+        content=part + part + b"--b--\r\n",
+        headers={"Content-Type": "multipart/form-data; boundary=b"},
+    )
+
+    assert response.status_code == 400
+    assert db.scalar(select(func.count()).select_from(File)) == 0
 
 
 def test_download_returns_the_same_bytes(client):

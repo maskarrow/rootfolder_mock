@@ -7,11 +7,12 @@
 # points at an interpreter that exists in the second. The final image holds no uv,
 # no build cache and no tests.
 
-ARG PYTHON_IMAGE=python:3.14-slim
+# Base images pinned by digest, so a tag republished upstream cannot change what is
+# built; Dependabot proposes the updates.
+FROM ghcr.io/astral-sh/uv:0.12.21@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177335345d43845cd4165e43b711 AS uv
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS python
 
-FROM ghcr.io/astral-sh/uv:0.12.21 AS uv
-
-FROM ${PYTHON_IMAGE} AS build
+FROM python AS build
 COPY --from=uv /uv /usr/local/bin/uv
 # `UV_PYTHON` wins over `.python-version`, which pins a patch release the base
 # image may not have; downloads stay off so the image's own Python is used.
@@ -26,9 +27,10 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 
-FROM ${PYTHON_IMAGE}
+FROM python
 # A fixed uid: on the server the PDF folder is owned by it (`chown 10001`).
-RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin app
+# pip goes: the app runs from its own virtual environment and installs nothing.
+RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin app     && python -m pip uninstall --yes --root-user-action=ignore pip
 WORKDIR /app
 # Owned by root and read-only for the app: it writes only to STORAGE_DIR and /tmp.
 COPY --from=build /app /app

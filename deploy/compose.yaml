@@ -15,9 +15,18 @@
 # folder. `docker compose down -v` removes exactly this app's data.
 name: rootfolder-mock
 
+# Every container's log, rotated. Without it Docker keeps one file per container
+# that grows until the disk is full: nginx and the api write a line per request.
+# At most 5 x 20 MB per container; `docker compose logs` reads them as before.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   db:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
@@ -26,12 +35,33 @@ services:
       - pgdata:/var/lib/postgresql/data
     # Docker's default 64 MB of shared memory can fail a parallel HNSW index build.
     shm_size: 1g
+    # Sized for its 3 GB (the defaults assume 128 MB). A transaction left open and
+    # idle (a stuck script, a forgotten psql BEGIN) is ended after a minute, before
+    # its locks block a migration and everything behind it. Queries over a second
+    # and lock waits are logged: the first place to look when the site is slow.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=768MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - idle_in_transaction_session_timeout=60s
+      - -c
+      - log_min_duration_statement=1s
+      - -c
+      - log_lock_waits=on
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
     restart: unless-stopped
+    logging: *logging
     networks: [internal]
     mem_limit: 3g
 
@@ -54,6 +84,10 @@ services:
       # Absolute: in the image the project root is `/`, and a relative path would
       # point where the non-root user cannot write.
       STORAGE_DIR: /data/storage
+      # Starlette writes each upload to a temporary file before the route runs. Here
+      # that is the storage volume, not the server's own disk: uploads in flight,
+      # however many or large, can then never fill the disk Postgres writes to.
+      TMPDIR: /data/storage
       # uvicorn trusts X-Forwarded-For / -Proto only from nginx, on this network.
       FORWARDED_ALLOW_IPS: 172.30.0.0/24
     volumes:
@@ -64,6 +98,7 @@ services:
     # Docker kills a container 10 s after asking it to stop; uvicorn needs up to 30.
     stop_grace_period: 40s
     restart: unless-stopped
+    logging: *logging
     networks: [internal]
     mem_limit: 1536m
     # No Linux capabilities, no privilege gain, a cap on processes: code that went
@@ -82,6 +117,7 @@ services:
       APP_DB_USER: ${APP_DB_USER:?}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?}
     networks: [internal]
+    logging: *logging
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
@@ -93,6 +129,7 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+    logging: *logging
     networks: [internal]
     mem_limit: 768m
     cap_drop: [ALL]
@@ -100,7 +137,7 @@ services:
     pids_limit: 256
 
   nginx:
-    image: nginx:stable-alpine
+    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
     ports:
       - "80:80"
       - "443:443"
@@ -113,11 +150,12 @@ services:
       - ./certbot/conf:/etc/letsencrypt:ro
       - ./certbot/www:/var/www/certbot:ro
     restart: unless-stopped
+    logging: *logging
     networks: [internal]
     mem_limit: 256m
 
   certbot:
-    image: certbot/certbot:latest
+    image: certbot/certbot:v5.8.0@sha256:f70ad0adbb7e117f0fe42a63c553f28ea451edabc0148757b6efcd9735acaa20
     # Only on demand: `docker compose run --rm certbot ...`.
     profiles: [certbot]
     volumes:

@@ -44,6 +44,10 @@ set-password email:
 delete-user email:
     cd backend; uv run python delete_user.py "{{email}}"
 
+# Every file one account uploaded, rows and PDFs (the load test's account).
+delete-files email:
+    cd backend; uv run python delete_files.py --uploaded-by "{{email}}"
+
 # The org's Anthropic key, asked in the terminal and stored encrypted.
 set-org-key org:
     cd backend; uv run python set_org_key.py --org "{{org}}" --provider anthropic

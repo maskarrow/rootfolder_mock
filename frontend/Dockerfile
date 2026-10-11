@@ -6,12 +6,14 @@
 # server starts; only `APP_VERSION`, the build's own identity, goes into the build
 # (the build ID and the footer).
 
-ARG NODE_IMAGE=node:22.23.1-slim
+# The base image pinned by digest, so a tag republished upstream cannot change what
+# is built; Dependabot proposes the updates. Debian 13, the same as the api image.
+FROM node:22.23.3-trixie-slim@sha256:154ba2f4d6fec323d28e4f4bb86bba4677f1223391a1979cf521304e03a98dfa AS node
 
-FROM ${NODE_IMAGE} AS build
+FROM node AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 COPY . .
 ARG APP_VERSION=dev
@@ -19,7 +21,10 @@ ENV APP_VERSION=$APP_VERSION
 # Needs internet: `next/font/google` downloads the font here, not at run time.
 RUN npm run build
 
-FROM ${NODE_IMAGE}
+FROM node
+# The server runs `node server.js` only. npm, npx, corepack and yarn, with their
+# own dependencies, are attack surface that is never used here.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx         /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
 WORKDIR /app
 # HOSTNAME: Docker sets it to the container id, and the Next server listens on
 # whatever it finds there.

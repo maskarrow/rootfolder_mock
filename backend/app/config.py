@@ -15,12 +15,18 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
 
     database_url: str
-    # Pool per process: 10 kept open, up to 20 more at peaks. Below Postgres' default
-    # of 100 connections. A request waits at most 10 s for a free one, then fails
-    # with an error instead of hanging: a full pool must be visible.
+    # Pool per process: 10 kept open, up to 30 more at peaks: 40, as many as the
+    # threads that run requests (anyio's default), so a running request never waits
+    # for a connection. Below Postgres' default of 100. A request that still waits
+    # gets a 503 after 10 s instead of hanging.
     db_pool_size: int = 10
-    db_max_overflow: int = 20
+    db_max_overflow: int = 30
     db_pool_timeout_s: int = 10
+    # Requests inside the app at once, and how long the others wait in line before
+    # a 503 (app/admission.py). The limit matches the thread pool and the database
+    # pool above; raise all three together, or none.
+    admission_limit: int = 40
+    admission_wait_s: float = 10
     # Any single query is cancelled after this; a runaway query cannot hold a
     # connection, and with it the pool, forever. Migrations and dumps do not use it.
     db_statement_timeout_ms: int = 30_000
@@ -55,6 +61,10 @@ class Settings(BaseSettings):
     # Relative to the repo root locally, absolute on servers (the mounted volume).
     storage_dir: str = "storage"
     max_upload_mb: int = 500
+    # Uploads are refused (507) while the storage has less than this free beyond room
+    # for one more upload of the maximum size: a full volume would also stop the
+    # nightly backups that are written to it.
+    upload_min_free_mb: int = 2048
 
     # Length of the simulated processing job after an upload.
     job_seconds: int = 30

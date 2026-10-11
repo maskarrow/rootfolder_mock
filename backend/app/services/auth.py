@@ -132,6 +132,7 @@ def read_session(db: Session, token: str | None) -> AuthContext | None:
         .where(UserSession.token_hash == hash_token(token))
     ).first()
     if row is None:
+        db.rollback()
         return None
     session, user = row
 
@@ -148,7 +149,11 @@ def read_session(db: Session, token: str | None) -> AuthContext | None:
 
     if moment - session.last_seen_at >= _ACTIVITY_THRESHOLD:
         session.last_seen_at = moment
-        db.commit()
+    # Always ends the transaction, so the connection goes back to the pool now. The
+    # route runs after this in another thread-pool turn; a connection held across
+    # that wait is how a burst deadlocked the app (load test, October 2026): every
+    # thread waiting for a connection held by a request waiting for a thread.
+    db.commit()
     return AuthContext(session=session, user=user)
 
 

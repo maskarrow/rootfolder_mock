@@ -12,3 +12,6 @@ storage/
 
 # Per-developer agent tooling (local preview config).
 .claude/
+
+# Load-test reports (generated)
+loadtest/reports/

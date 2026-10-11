@@ -1,0 +1,63 @@
+# Pull requests that keep every pinned version current: the actions (pinned by
+# commit), the Python and npm packages (pinned by the lock files), and the base
+# images (pinned by digest). Security fixes arrive as soon as they are published;
+# routine updates once a week, each ecosystem in one grouped pull request.
+#
+# The cooldown waits a few days before proposing a new release: a hijacked
+# package is usually found and pulled within that time. Security updates skip it.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /backend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories: [/backend, /frontend]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      base-images:
+        patterns: ["*"]
+
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      server-images:
+        patterns: ["*"]
+    ignore:
+      # A new Postgres major version needs a dump and restore, not a new image.
+      - dependency-name: pgvector/pgvector
+        update-types: ["version-update:semver-major"]

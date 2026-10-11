@@ -2,6 +2,7 @@
 against whatever `DATABASE_URL` the environment gives (the local `.env`, the test
 database, or the container's environment in a deploy)."""
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -33,11 +34,20 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+_LOCK_TIMEOUT = os.environ.get("MIGRATION_LOCK_TIMEOUT", "5s")
+
+
 def run_migrations_online() -> None:
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # A migration that has to wait for a table (behind a long query or a backup)
+        # gives up after this rather than hold its place in the lock queue, where
+        # every app query on that table would wait behind it: the site would hang.
+        # deploy/scripts/migrate.py tries again. No statement timeout: a migration
+        # may rightly run for minutes (an index on a large table).
+        connect_args={"options": f"-c lock_timeout={_LOCK_TIMEOUT}"},
     )
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)

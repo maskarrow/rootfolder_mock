@@ -9,11 +9,13 @@ import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile
 
 from app import storage
 from app.config import settings
@@ -26,6 +28,11 @@ from app.tenancy import in_org
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+_MB = 1024 * 1024
+# Room for the multipart headers around the file, in a declared Content-Length.
+_FORM_OVERHEAD_BYTES = 10 * _MB
+_SEND_AS = "Send the PDF as multipart/form-data, in the field `file`."
 
 
 class FileOut(BaseModel):
@@ -40,12 +47,46 @@ class FileOut(BaseModel):
 
 
 @router.post("", response_model=FileOut, status_code=201)
-def upload(
-    file: UploadFile,
+async def upload(
+    request: Request,
     background_tasks: BackgroundTasks,
     ctx: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ):
+    """The PDF arrives as the multipart field `file`.
+
+    The body is read here, after the session check, on purpose: with a `file:
+    UploadFile` parameter FastAPI reads and spools the whole body (up to 510 MB)
+    before it runs any dependency, so a client without a session could fill the disk
+    and only then get its 401.
+    """
+    if storage.free_mb() < settings.upload_min_free_mb + settings.max_upload_mb:
+        logger.error("Upload refused: the storage has %s MB free", storage.free_mb())
+        raise HTTPException(
+            status_code=507,
+            detail="The storage is full; uploads are paused. Tell the administrator.",
+        )
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > settings.max_upload_mb * _MB + _FORM_OVERHEAD_BYTES:
+        raise HTTPException(
+            status_code=413, detail=f"The file exceeds the {settings.max_upload_mb} MB limit."
+        )
+    # Multipart only: Starlette reads any other form encoding into memory whole.
+    if not request.headers.get("content-type", "").startswith("multipart/form-data"):
+        raise HTTPException(status_code=422, detail=_SEND_AS)
+
+    async with request.form(max_files=1, max_fields=10) as form:
+        file = form.get("file")
+        if not isinstance(file, UploadFile):
+            raise HTTPException(status_code=422, detail=_SEND_AS)
+        row = await run_in_threadpool(_store, file, ctx, db)
+    background_tasks.add_task(jobs.run, row.id)
+    return row
+
+
+def _store(file: UploadFile, ctx: AuthContext, db: Session) -> File:
+    """Copies the upload into the storage and records it. Blocking: runs in a
+    thread, off the event loop."""
     try:
         stored_path, size = storage.save_upload(file, max_mb=settings.max_upload_mb)
     except storage.UploadValidationError as exc:
@@ -70,7 +111,6 @@ def upload(
         storage.path_of(stored_path).unlink(missing_ok=True)
         raise
     logger.info("File %s stored: %s bytes", row.id, size)
-    background_tasks.add_task(jobs.run, row.id)
     return row
 
 

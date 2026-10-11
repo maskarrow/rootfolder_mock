@@ -69,10 +69,12 @@ can read `.env`, which compose needs for every command.
 
    Log out and back in once, so the new group applies.
 
-2. **The PDF folder** on the volume:
+2. **The folders on the volume** — the PDFs (owned by the app's uid) and the
+   nightly backups:
 
    ```bash
    sudo mkdir -p /mnt/storage/pdfs && sudo chown 10001:10001 /mnt/storage/pdfs
+   sudo mkdir -p /mnt/storage/backups
    ```
 
 3. **`.env`**: copy `.env.example`, fill in the empty values (the commands to
@@ -103,12 +105,18 @@ can read `.env`, which compose needs for every command.
    docker compose run --rm certbot certonly --webroot -w /var/www/certbot -d rootfolder.app -d www.rootfolder.app --email <your email> --agree-tos --no-eff-email
    ```
 
-6. **Renewal**, checked daily:
+6. **The timers**: certificate renewal (daily), the health watchdog (every minute,
+   restarts a container Docker reports unhealthy — Docker does not), and the
+   nightly backup (03:00, to the volume, verified and kept 14 days):
 
    ```bash
-   sudo cp /opt/rootfolder/systemd/certbot-renew.* /etc/systemd/system/
-   sudo systemctl daemon-reload && sudo systemctl enable --now certbot-renew.timer
+   sudo cp /opt/rootfolder/systemd/*.service /opt/rootfolder/systemd/*.timer /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now certbot-renew.timer rootfolder-heal.timer rootfolder-backup.timer
    ```
+
+   Check them later with `systemctl list-timers 'rootfolder-*'` and the journal:
+   `journalctl -t rootfolder-heal` and `journalctl -t rootfolder-backup`.
 
 7. **The CI key**: a key pair only GitHub uses, without a passphrase (GitHub
    cannot type one). Generate it on the laptop, in Git Bash:
@@ -134,6 +142,75 @@ can read `.env`, which compose needs for every command.
    docker compose run --rm api python create_user.py you@example.com "Your Name" --org Rootfolder --admin
    docker compose run --rm api python seed.py
    ```
+
+## Updating a running server to this release
+
+The security and resilience round (see [`../SECURITY.md`](../SECURITY.md)) changes
+files that live on the server — `compose.yaml`, the nginx config, the scripts, the
+systemd units — as well as the app code. The app code ships through the Deploy
+button as usual; the server-side files must be copied once, in this order, because
+the new `compose.yaml` now **requires** `APP_DB_USER` and `APP_DB_PASSWORD`.
+
+1. **Add the app database role to `.env` first**, or the new compose refuses to
+   start. On the server:
+
+   ```bash
+   sudo -u deploy nano /opt/rootfolder/.env
+   ```
+
+   Add (generate the password with `openssl rand -hex 32`):
+
+   ```
+   APP_DB_USER=rootfolder_app
+   APP_DB_PASSWORD=<openssl rand -hex 32>
+   ```
+
+   The `migrate` service creates this role (rows only) on the next deploy; the API
+   switches to it automatically. The owner password stays only in `POSTGRES_PASSWORD`.
+
+2. **Copy the new server-side files** from the laptop:
+
+   ```bash
+   scp -r deploy/compose.yaml deploy/nginx deploy/scripts deploy/systemd alex@2.31.2.210:~/deploy-update/
+   ```
+
+   On the server:
+
+   ```bash
+   sudo cp -r ~/deploy-update/. /opt/rootfolder/ && rm -rf ~/deploy-update
+   sudo chown -R deploy:deploy /opt/rootfolder
+   sudo mkdir -p /mnt/storage/backups
+   ```
+
+3. **Enable the new timers** (watchdog, backup — certbot is already enabled):
+
+   ```bash
+   sudo cp /opt/rootfolder/systemd/rootfolder-*.service /opt/rootfolder/systemd/rootfolder-*.timer /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now rootfolder-heal.timer rootfolder-backup.timer
+   ```
+
+4. **Push and Deploy** (Actions → Deploy). The new workflow refuses any commit not
+   on `main` and runs the full CI first; the deploy then creates the app role,
+   migrates, and recreates the containers with the new compose and nginx.
+
+5. **Check it came up**, and that the app now connects as the least-privilege role:
+
+   ```bash
+   cd /opt/rootfolder
+   curl -fsS --resolve rootfolder.app:443:127.0.0.1 https://rootfolder.app/api/health/ready
+   docker compose exec db psql -U rootfolder rootfolder -c "\du"
+   ```
+
+6. **Recovery drills** (do them once, so the "just restart it" promise is real):
+   - `sudo reboot` — the stack comes back on its own (`restart: unless-stopped`).
+   - Freeze the API: `docker kill --signal=SIGSTOP $(docker compose ps -q api)`; within
+     a minute the watchdog restarts it (`journalctl -t rootfolder-heal`).
+   - Stop the database briefly: `/health/ready` returns 503, `/health/live` stays
+     200 (so the API is not restarted), and it recovers when the database returns.
+
+Then run the load test on the server and the hostile suite locally — see
+[`../loadtest/README.md`](../loadtest/README.md).
 
 ## Every kind of change, and how to do it
 

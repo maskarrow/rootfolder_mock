@@ -7,13 +7,16 @@ and moving the storage never breaks a row.
 
 Starlette has already spooled the multipart body to a temporary file (in the
 system temp directory, for anything over 1 MB) before the route runs; this copies
-it into the storage in 1 MB chunks and enforces the cap on the way.
+it into the storage in 1 MB chunks and enforces the cap on the way. On the server
+`TMPDIR` points at the storage volume too (deploy/compose.yaml), so uploads in
+flight never fill the disk the database lives on.
 """
 
+import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import UploadFile
+from starlette.datastructures import UploadFile
 
 from app.config import ROOT, settings
 
@@ -37,6 +40,12 @@ def root() -> Path:
 
 def path_of(stored_path: str) -> Path:
     return root() / stored_path
+
+
+def free_mb() -> int:
+    """Free space where the uploads go, in MB."""
+    root().mkdir(parents=True, exist_ok=True)
+    return shutil.disk_usage(root()).free // (1024 * 1024)
 
 
 def save_upload(file: UploadFile, *, max_mb: int) -> tuple[str, int]:

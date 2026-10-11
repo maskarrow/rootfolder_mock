@@ -6,6 +6,7 @@ in a `finally`: a failure must not leave later tests on an old schema. Alembic's
 """
 
 import logging
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -97,7 +98,7 @@ def test_login_records_the_time_and_me_returns_it(anon_client, admin):
     assert anon_client.get("/auth/me").json()["last_login_at"] == response.json()["last_login_at"]
 
 
-def _run_migrate_script() -> subprocess.CompletedProcess:
+def _run_migrate_script(**env: str) -> subprocess.CompletedProcess:
     """As deploy.sh does in the api container: the script on standard input, from the
     folder that holds alembic.ini."""
     return subprocess.run(
@@ -107,6 +108,7 @@ def _run_migrate_script() -> subprocess.CompletedProcess:
         text=True,
         cwd=BACKEND,
         timeout=120,
+        env={**os.environ, **env},
     )
 
 
@@ -134,3 +136,31 @@ def test_migrate_script_skips_when_the_database_is_ahead_of_the_image():
     finally:
         with engine.begin() as conn:
             conn.execute(text("UPDATE alembic_version SET version_num = :v"), {"v": HEAD})
+
+
+def test_a_migration_kept_waiting_for_a_table_gives_up_and_changes_nothing(alembic_config):
+    command.downgrade(alembic_config, "0002")
+    try:
+        with engine.connect() as busy:
+            # An open transaction that has read `users`, which 0003 alters: the
+            # migration has to wait for it to end.
+            busy.execute(text("SELECT 1 FROM users LIMIT 1"))
+            result = _run_migrate_script(
+                MIGRATION_LOCK_TIMEOUT="300ms", MIGRATION_LOCK_ATTEMPTS="1"
+            )
+            busy.rollback()
+
+        assert result.returncode == 1
+        assert "nothing was changed" in result.stderr
+        with engine.connect() as conn:
+            version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+            columns = conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'users' AND column_name = 'last_login_at'"
+                )
+            ).all()
+        assert version == "0002"
+        assert columns == []
+    finally:
+        command.upgrade(alembic_config, "head")

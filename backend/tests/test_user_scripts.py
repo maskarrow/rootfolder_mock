@@ -5,9 +5,11 @@ import sys
 import pytest
 from sqlalchemy import func, select
 
+import delete_files
 import delete_user
 import list_users
 import set_password
+from app import storage
 from app.models.audit import AuditEntry
 from app.models.file import DONE, File
 from app.models.user import MEMBER, User
@@ -108,3 +110,46 @@ def test_delete_user_keeps_the_last_admin(run, db, admin):
 
     db.expire_all()
     assert db.get(User, admin.id) is not None
+
+
+def _file_of(db, org, user, name):
+    storage.root().mkdir(parents=True, exist_ok=True)
+    storage.path_of(name).write_bytes(b"%PDF-1.4")
+    file = File(
+        org_id=org.id,
+        uploaded_by=user.id if user else None,
+        filename=name,
+        stored_path=name,
+        size_bytes=8,
+        status=DONE,
+    )
+    db.add(file)
+    db.commit()
+    return file
+
+
+def test_delete_files_removes_only_that_accounts_rows_and_pdfs(run, db, org, admin, make_user):
+    loadtest = make_user(org, role=MEMBER)
+    gone = [_file_of(db, org, loadtest, f"loadtest-{n}.pdf") for n in range(3)]
+    kept = _file_of(db, org, admin, "admins-own.pdf")
+    gone_paths = [storage.path_of(f.stored_path) for f in gone]
+
+    assert run(delete_files, "--uploaded-by", loadtest.email, answers=[loadtest.email]) == 0
+
+    db.expire_all()
+    assert db.scalars(select(File.id)).all() == [kept.id]
+    assert not any(path.exists() for path in gone_paths)
+    assert storage.path_of(kept.stored_path).exists()
+    entry = db.scalars(select(AuditEntry).where(AuditEntry.event == audit.FILES_DELETED)).one()
+    assert entry.email == loadtest.email
+
+
+def test_delete_files_needs_the_email_typed_again(run, db, org, make_user):
+    loadtest = make_user(org, role=MEMBER)
+    file = _file_of(db, org, loadtest, "loadtest-kept.pdf")
+
+    assert run(delete_files, "--uploaded-by", loadtest.email, answers=["no"]) == 1
+
+    db.expire_all()
+    assert db.get(File, file.id) is not None
+    assert storage.path_of(file.stored_path).exists()

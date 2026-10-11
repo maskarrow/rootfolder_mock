@@ -17,6 +17,13 @@ const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js`.
   poweredByHeader: false,
 
+  // The app has no images, so the built-in `/_next/image` optimizer is pure attack
+  // surface: it fetches whatever its `url=` names. Remote and other-host URLs are
+  // already refused, but a same-origin path is still fetched (a small SSRF, and a
+  // 500 when the target is not an image). Turning optimization off makes the
+  // endpoint serve the URL back untouched instead of fetching it.
+  images: { unoptimized: true },
+
   // Static assets live under `/_next/static/<build id>/`; with the version as the
   // build id, a deploy's assets are recognizable in the proxy's logs.
   generateBuildId: async () => APP_VERSION || null,

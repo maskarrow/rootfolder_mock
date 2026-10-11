@@ -1,25 +1,36 @@
-# Checks on every push to main and every pull request. They inform; they do not
-# block (branch protection needs a paid plan for private repos).
+# Checks on every push to main, on every pull request, and before every deploy
+# (deploy.yml calls this workflow for the exact commit it is about to ship). On a
+# push they inform; they do not block (branch protection needs a paid plan for
+# private repos). A deploy does not start unless they pass.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to check (a full SHA)
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # When deploy.yml calls this, github.workflow is "Deploy": a deploy's checks
+  # never cancel, and are never cancelled by, the checks of a push.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   backend:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     services:
       postgres:
-        image: pgvector/pgvector:pg17
+        image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
         env:
           POSTGRES_USER: mock
           POSTGRES_PASSWORD: mock
@@ -36,6 +47,9 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uv sync --frozen
       - run: uv run ruff check
@@ -46,11 +60,15 @@ jobs:
 
   frontend:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # Reads the `volta` pin, so CI builds with the same Node as the image.
@@ -61,3 +79,38 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm run build
+
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          # The whole history: a secret committed once stays in it after removal.
+          fetch-depth: 0
+          # No token left in .git/config, where the scanner below could read it.
+          persist-credentials: false
+
+      - name: No secrets in the git history (gitleaks)
+        # As the runner's own user, so git trusts the mounted repository.
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/repo"
+          zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git /repo --redact --no-banner
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Python packages in the image have no known vulnerabilities (pip-audit)
+        working-directory: backend
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/requirements.txt" --require-hashes --disable-pip --progress-spinner off
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/package.json
+      - name: npm packages in the image have no high or critical advisories (npm audit)
+        working-directory: frontend
+        # Development tools are left out: they never reach the server. Their own
+        # advisories are listed in SECURITY.md.
+        run: npm audit --omit=dev --audit-level=high

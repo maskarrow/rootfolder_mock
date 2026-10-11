@@ -182,6 +182,10 @@ The backend reads the repo-root `.env` locally; environment variables win.
 | `RESEND_API_KEY` / `EMAIL_FROM` | empty / `Rootfolder Mock <onboarding@resend.dev>` | Without a key the test email is logged at WARNING. The test sender only delivers to the Resend account's own address |
 | `STORAGE_DIR` | `storage` | Relative to the repo root locally, absolute on servers |
 | `MAX_UPLOAD_MB` | `500` | |
+| `UPLOAD_MIN_FREE_MB` | `2048` | Uploads get 507 while the storage has less than this free beyond room for one maximum upload |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT_S` | `10` / `30` / `10` | Connections kept, extra allowed under load, seconds a request waits for one before a 503 |
+| `ADMISSION_LIMIT` / `ADMISSION_WAIT_S` | `40` / `10` | Requests inside the app at once; how long the rest wait in line before a 503. Matches the 40 threads and 40 connections |
+| `DB_STATEMENT_TIMEOUT_MS` | `30000` | Postgres cancels a query that runs longer; the request gets 503 |
 | `JOB_SECONDS` | `30` | Length of the simulated job after an upload |
 | `CLEANUP_INTERVAL_HOURS` | `24` | `0` disables the periodic cleanup |
 | `STREAM_SILENCE_S` | `20` | The stream's silent phase |

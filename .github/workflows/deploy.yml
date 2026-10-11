@@ -1,11 +1,22 @@
 # Deploy, started by hand from the Actions tab.
 #
+# 0. verify: resolves the chosen ref to one commit, and refuses it unless it is on
+#    main. Every later job uses that commit, so a push to main during the deploy
+#    cannot slip a different, untested commit in. Then the CI checks (ci.yml:
+#    tests, lint, build, secrets, known vulnerabilities) run on it.
 # 1. build: on an ARM runner (the server is a Hetzner CAX, ARM), builds the api and
 #    web images for the chosen commit, tagged `sha-<commit>`, and pushes them to
 #    GHCR. Images that already exist for that commit are reused, not rebuilt.
 # 2. deploy: connects to the server over SSH as `deploy`, whose key can only run
 #    scripts/deploy.sh, and passes the two images pinned by digest. The script's
 #    output appears in this job's log.
+# 3. scan (beside deploy, report only): lists the known vulnerabilities in the
+#    images, with a token that can only read packages.
+#
+# To go back to an older release, deploy its commit: it is on main, its images
+# already exist, and the server keeps the database as it is. If GitHub itself is
+# down, deploy.log on the server lists the images of every release, for running
+# scripts/deploy.sh by hand.
 #
 # Secrets (Settings > Secrets and variables > Actions):
 #   DEPLOY_HOST          the server's IPv4
@@ -38,8 +49,38 @@ env:
   IMAGE_PREFIX: ghcr.io/maskarrow/rootfolder-mock
 
 jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The commit is on main
+        id: resolve
+        run: |
+          sha="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::${sha:0:7} is not on main. Merge it into main first; only main is deployed."
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Commit: \`$sha\` ($(git log -1 --format=%s "$sha"))" >> "$GITHUB_STEP_SUMMARY"
+
+  ci:
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.verify.outputs.sha }}
+
   build:
+    needs: [verify, ci]
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -50,7 +91,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
 
       - name: Version
         id: version
@@ -116,9 +158,42 @@ jobs:
             echo "- $image: \`$IMAGE_PREFIX-$image@$digest\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
+  scan:
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    # Read only: the scanner is a third-party image and gets this job's token.
+    permissions:
+      packages: read
+    steps:
+      - name: Known vulnerabilities in the images (trivy, report only)
+        # A finding marks this step and does not stop the deploy: most come from the
+        # base images, and the fix is the next Dependabot update, not a blocked
+        # release. Our own dependencies are checked, and do block, in ci.yml.
+        continue-on-error: true
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          API_IMAGE: ${{ needs.build.outputs.api }}
+          WEB_IMAGE: ${{ needs.build.outputs.web }}
+        run: |
+          set -o pipefail
+          status=0
+          for image in "$API_IMAGE" "$WEB_IMAGE"; do
+            echo "### $image" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD \
+              aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
+              image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+              --exit-code 1 --format table "$image" | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit "$status"
+
   deploy:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Deploy over SSH
         env:

@@ -4,10 +4,15 @@ Every failed login (unknown email, wrong password, deactivated account) gets the
 same 401 in about the same time, so the form does not reveal which emails have
 accounts.
 
-Rate limits are counted from the audit log: 10 failures per email or 50 per IP in
-15 minutes, after which attempts get 429 without checking the password. Blocked
-attempts are not logged, or an attack would fill the table and extend its own
-block.
+Rate limits are counted from the audit log, over 15 minutes: 10 failures for one
+email from one IP, 50 from one IP for any emails, and 100 for one email from all
+IPs together. Past any of them attempts get 429 without checking the password.
+Blocked attempts are not logged, or an attack would fill the table and extend its
+own block.
+
+The first limit is per email *and* IP so that someone who knows a colleague's
+email cannot lock them out by typing wrong passwords: the colleague logs in from
+another address. Guessing spread over many addresses meets the third limit.
 
 The IP is `request.client.host`. Behind the production proxy uvicorn needs
 `--proxy-headers` and `--forwarded-allow-ips`, or every request appears to come
@@ -35,8 +40,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 FAILURE_WINDOW = timedelta(minutes=15)
-MAX_FAILURES_PER_EMAIL = 10
+MAX_FAILURES_PER_EMAIL_AND_IP = 10
 MAX_FAILURES_PER_IP = 50
+MAX_FAILURES_PER_EMAIL = 100
 
 _WRONG = "Wrong email or password."
 _TOO_MANY = "Too many failed attempts. Try again in 15 minutes."
@@ -72,6 +78,19 @@ def _user_agent(request: Request) -> str | None:
     return (request.headers.get("user-agent") or "")[:500] or None
 
 
+def _blocked(db: Session, email: str, ip: str | None) -> bool:
+    since = auth.now() - FAILURE_WINDOW
+    if audit.recent_failures(db, since=since, email=email) >= MAX_FAILURES_PER_EMAIL:
+        return True
+    if ip is None:
+        # No address to tell callers apart (never the case behind the proxy).
+        return audit.recent_failures(db, since=since, email=email) >= MAX_FAILURES_PER_EMAIL_AND_IP
+    return (
+        audit.recent_failures(db, since=since, email=email, ip=ip) >= MAX_FAILURES_PER_EMAIL_AND_IP
+        or audit.recent_failures(db, since=since, ip=ip) >= MAX_FAILURES_PER_IP
+    )
+
+
 def _me(db: Session, user: User, request: Request) -> MeOut:
     org = db.get(Org, user.org_id)
     return MeOut(
@@ -92,10 +111,7 @@ def login(payload: LoginIn, request: Request, response: Response, db: Session = 
     email = payload.email.strip().lower()
     ip = _ip(request)
 
-    since = auth.now() - FAILURE_WINDOW
-    if audit.recent_failures(db, since=since, email=email) >= MAX_FAILURES_PER_EMAIL or (
-        ip is not None and audit.recent_failures(db, since=since, ip=ip) >= MAX_FAILURES_PER_IP
-    ):
+    if _blocked(db, email, ip):
         logger.warning("Login blocked by the rate limit: email=%s ip=%s", email, ip)
         raise HTTPException(status_code=429, detail=_TOO_MANY)
 
