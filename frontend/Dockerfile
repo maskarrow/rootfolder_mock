@@ -8,7 +8,7 @@
 
 # The base image pinned by digest, so a tag republished upstream cannot change what
 # is built; Dependabot proposes the updates. Debian 13, the same as the api image.
-FROM node:22.23.3-trixie-slim@sha256:154ba2f4d6fec323d28e4f4bb86bba4677f1223391a1979cf521304e03a98dfa AS node
+FROM node:26.10.0-trixie-slim@sha256:930557a230abacbc3f4fd9b8648abf8f4bee1e17cb72195dcdfb2f709bc85b33 AS node
 
 FROM node AS build
 WORKDIR /app
