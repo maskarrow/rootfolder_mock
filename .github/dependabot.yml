@@ -37,6 +37,15 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # TypeScript 7 (the native rewrite) is not yet supported by the
+      # typescript-eslint that eslint-config-next bundles: it breaks `npm run lint`.
+      # Hold at 5.x until a newer eslint-config-next supports it.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # @types/node tracks the Node runtime major (22), not the newest types.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: docker
     directories: [/backend, /frontend]
