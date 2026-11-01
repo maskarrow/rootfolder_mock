@@ -137,7 +137,7 @@ services:
     pids_limit: 256
 
   nginx:
-    image: nginx:1.31.0-alpine@sha256:2f07d83bf561b506400dc183b1b2003803e39efbd22451f848adaba14d28c7c7
+    image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
     ports:
       - "80:80"
       - "443:443"
@@ -155,7 +155,7 @@ services:
     mem_limit: 256m
 
   certbot:
-    image: certbot/certbot:v5.8.0@sha256:f70ad0adbb7e117f0fe42a63c553f28ea451edabc0148757b6efcd9735acaa20
+    image: certbot/certbot:v5.9.0@sha256:bc93cb710b413e6b456d622f9b0133b3e109c0a78c2ed9976af43d209b0a1805
     # Only on demand: `docker compose run --rm certbot ...`.
     profiles: [certbot]
     volumes:
